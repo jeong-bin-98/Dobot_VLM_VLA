@@ -1,0 +1,37 @@
+# ==============================================================================
+# DOBOT × LeRobot × Pi0 Pipeline — Dependencies
+# ==============================================================================
+
+# --- Core ---
+numpy>=1.24.0
+opencv-python>=4.8.0
+pydobot>=1.3.0
+pyserial>=3.5
+keyboard>=0.13.5
+
+# --- Data Format (LeRobot v3.0) ---
+pandas>=2.0.0
+pyarrow>=14.0.0
+
+# --- ML / Inference ---
+torch>=2.2.0
+safetensors>=0.4.0
+transformers>=4.40.0
+
+# --- LeRobot (install from source for v3.0 / >= 0.5.0) ---
+# pip install "lerobot[pi] @ git+https://github.com/huggingface/lerobot.git"
+# For LoRA fine-tuning:
+# pip install "lerobot[pi,peft] @ git+https://github.com/huggingface/lerobot.git"
+
+# --- Pi0 Server ---
+fastapi>=0.110.0
+uvicorn>=0.27.0
+python-multipart>=0.0.9
+
+# --- Pi0 Client ---
+requests>=2.31.0
+websocket-client>=1.6.0
+
+# --- LLM Chaining (optional) ---
+# pip install anthropic        # Claude API
+# pip install openai            # OpenAI API
