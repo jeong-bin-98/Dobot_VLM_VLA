@@ -40,14 +40,12 @@ else
         --dataset.root=${DATASET_ROOT} \
         --policy.type=pi0_fast \
         --policy.pretrained_path=lerobot/pi0_fast_base \
-        --policy.repo_id=pi0fast_dobot \
         --policy.push_to_hub=false \
         --policy.dtype=bfloat16 \
         --policy.gradient_checkpointing=true \
         --policy.chunk_size=10 \
         --policy.n_action_steps=1 \
-        --batch_size=8 \
+        --batch_size=4 \
         --steps=100000 \
-        --output_dir=./outputs/pi0fast_dobot \
-        --policy.device=cuda
+        --output_dir=outputs/pi0fast_dobot
 fi
