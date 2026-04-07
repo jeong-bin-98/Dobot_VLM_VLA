@@ -20,7 +20,7 @@ if [ "$MODE" = "mac" ]; then
         --dataset.repo_id=local/dataset_v3 \
         --dataset.root=${DATASET_ROOT} \
         --policy.type=pi0_fast \
-        --policy.pretrained_path=lerobot/pi0_fast_base \
+        --policy.pretrained_path=lerobot/pi0fast_base \
         --policy.dtype=float32 \
         --policy.gradient_checkpointing=true \
         --policy.push_to_hub=false \
@@ -39,7 +39,7 @@ else
         --dataset.repo_id=local/dataset_v3 \
         --dataset.root=${DATASET_ROOT} \
         --policy.type=pi0_fast \
-        --policy.pretrained_path=lerobot/pi0_fast_base \
+        --policy.pretrained_path=lerobot/pi0fast_base \
         --policy.push_to_hub=false \
         --policy.dtype=bfloat16 \
         --policy.gradient_checkpointing=true \
