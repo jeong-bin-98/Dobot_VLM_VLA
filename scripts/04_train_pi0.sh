@@ -9,7 +9,7 @@
 #   bash scripts/04_train_pi0.sh [mac|gpu]
 
 MODE=${1:-gpu}
-DATASET_ROOT="./dataset_v3"
+DATASET_ROOT="./dataset_v4"
 
 if [ "$MODE" = "mac" ]; then
     # ============================================================
@@ -17,14 +17,14 @@ if [ "$MODE" = "mac" ]; then
     # ============================================================
     echo "Mac 모드 (MPS, 메모리 절약)"
     KMP_DUPLICATE_LIB_OK=TRUE lerobot-train \
-        --dataset.repo_id=local/dataset_v3 \
+        --dataset.repo_id=local/dataset_v4 \
         --dataset.root=${DATASET_ROOT} \
         --policy.type=pi0_fast \
-        --policy.pretrained_path=lerobot/pi0fast_base \
+        --policy.pretrained_path=lerobot/pi0fast-base \
         --policy.dtype=float32 \
         --policy.gradient_checkpointing=true \
         --policy.push_to_hub=false \
-        --policy.chunk_size=10 \
+        --policy.chunk_size=5 \
         --policy.n_action_steps=1 \
         --batch_size=1 \
         --steps=1000 \
@@ -36,14 +36,14 @@ else
     # ============================================================
     echo "GPU 서버 모드 (RTX A6000 x2)"
     lerobot-train \
-        --dataset.repo_id=local/dataset_v3 \
+        --dataset.repo_id=local/dataset_v4 \
         --dataset.root=${DATASET_ROOT} \
         --policy.type=pi0_fast \
-        --policy.pretrained_path=lerobot/pi0fast_base \
+        --policy.pretrained_path=lerobot/pi0fast-base \
         --policy.push_to_hub=false \
         --policy.dtype=bfloat16 \
         --policy.gradient_checkpointing=true \
-        --policy.chunk_size=10 \
+        --policy.chunk_size=5 \
         --policy.n_action_steps=1 \
         --batch_size=4 \
         --steps=100000 \
