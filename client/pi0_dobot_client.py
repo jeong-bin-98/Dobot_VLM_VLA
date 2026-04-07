@@ -6,11 +6,11 @@ LLM(선택) -> Pi0 서버 -> DOBOT 실행.
 
     python pi0_dobot_client.py \\
         --server http://192.168.1.100:8000 \\
-        --port COM4 --task "pick up the red cup"
+        --task "pick up the red cup"
 
     python pi0_dobot_client.py \\
         --server http://192.168.1.100:8000 \\
-        --port COM4 --llm-mode --goal "책상 정리"
+        --llm-mode --goal "책상 정리"
 """
 
 import sys
@@ -266,8 +266,12 @@ class DobotController:
         for p in list_ports.comports():
             if "CH340" in p.description or "CP210" in p.description:
                 return p.device
+        # Mac: /dev/tty.usbserial-* 패턴 검색
+        for p in list_ports.comports():
+            if "usbserial" in p.device or "usbmodem" in p.device:
+                return p.device
         ports = list_ports.comports()
-        return ports[0].device if ports else "/dev/ttyUSB0"
+        return ports[0].device if ports else "/dev/tty.usbserial-0001"
 
     def get_pose(self):
         r = self.dobot.pose()
@@ -336,13 +340,16 @@ class CameraManager:
       cam2 (index 1) = top 카메라
     """
     def __init__(self, cam1_id=0, cam2_id=1):
+        import platform
+        backend = cv2.CAP_AVFOUNDATION if platform.system() == "Darwin" else cv2.CAP_V4L2
+
         self.cap_wrist = cv2.VideoCapture(cam1_id)
         self.cap_top = cv2.VideoCapture(cam2_id)
 
         if not self.cap_wrist.isOpened():
-            self.cap_wrist = cv2.VideoCapture(cam1_id, cv2.CAP_V4L2)
+            self.cap_wrist = cv2.VideoCapture(cam1_id, backend)
         if not self.cap_top.isOpened():
-            self.cap_top = cv2.VideoCapture(cam2_id, cv2.CAP_V4L2)
+            self.cap_top = cv2.VideoCapture(cam2_id, backend)
 
         for cap in [self.cap_wrist, self.cap_top]:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
