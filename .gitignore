@@ -31,11 +31,6 @@ images
 *.parquet
 *.mp4
 
-# Data collection scripts (서버에 불필요)
-scripts/01_collect_data.py
-scripts/02_convert_v2_to_v3.py
-scripts/03_validate_dataset.py
-scripts/task_normalizer.py
 
 # Model weights (large files)
 model/
