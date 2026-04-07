@@ -330,29 +330,35 @@ class DobotController:
                 pass
 # 카메라 관리
 class CameraManager:
+    """
+    카메라 매핑 (데이터 수집 01_collect_data.py와 동일):
+      cam1 (index 0) = wrist 카메라
+      cam2 (index 1) = top 카메라
+    """
     def __init__(self, cam1_id=0, cam2_id=1):
-        self.cap1 = cv2.VideoCapture(cam1_id)
-        self.cap2 = cv2.VideoCapture(cam2_id)
+        self.cap_wrist = cv2.VideoCapture(cam1_id)
+        self.cap_top = cv2.VideoCapture(cam2_id)
 
-        if not self.cap1.isOpened():
-            self.cap1 = cv2.VideoCapture(cam1_id, cv2.CAP_V4L2)
-        if not self.cap2.isOpened():
-            self.cap2 = cv2.VideoCapture(cam2_id, cv2.CAP_V4L2)
+        if not self.cap_wrist.isOpened():
+            self.cap_wrist = cv2.VideoCapture(cam1_id, cv2.CAP_V4L2)
+        if not self.cap_top.isOpened():
+            self.cap_top = cv2.VideoCapture(cam2_id, cv2.CAP_V4L2)
 
-        for cap in [self.cap1, self.cap2]:
+        for cap in [self.cap_wrist, self.cap_top]:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
 
-        print(f"카메라: {cam1_id}, {cam2_id}")
+        print(f"카메라: wrist={cam1_id}, top={cam2_id}")
 
     def capture(self):
-        _, f1 = self.cap1.read()
-        _, f2 = self.cap2.read()
-        return f1, f2
+        """Returns (top_frame, wrist_frame) — 서버 API 순서에 맞춤"""
+        _, f_wrist = self.cap_wrist.read()
+        _, f_top = self.cap_top.read()
+        return f_top, f_wrist
 
     def close(self):
-        self.cap1.release()
-        self.cap2.release()
+        self.cap_wrist.release()
+        self.cap_top.release()
         cv2.destroyAllWindows()
 # 메인 클래스
 class Pi0DobotPipeline:
@@ -484,7 +490,7 @@ class Pi0DobotPipeline:
                 if key == 27:  # ESC
                     break
 
-                elif key == ord(' ') or auto_mode:
+                elif (key == ord(' ') or auto_mode) and f1 is not None and f2 is not None:
                     state = self.dobot.get_state()
 
                     # Pi0 서버 추론
@@ -583,8 +589,8 @@ def main():
 
     # DOBOT
     parser.add_argument("--port", type=str, default=None, help="DOBOT 시리얼 포트")
-    parser.add_argument("--cam1", type=int, default=0, help="Top 카메라 ID")
-    parser.add_argument("--cam2", type=int, default=1, help="Wrist 카메라 ID")
+    parser.add_argument("--cam1", type=int, default=0, help="Wrist 카메라 ID (데이터 수집과 동일)")
+    parser.add_argument("--cam2", type=int, default=1, help="Top 카메라 ID (데이터 수집과 동일)")
 
     # 작업
     parser.add_argument("--task", type=str, default="pick up the object",
