@@ -85,14 +85,15 @@ pip install -r requirements.txt
 ### 2. 데이터 수집
 
 ```bash
+# Mac (포트 자동 감지, 또는 --port /dev/tty.usbserial-XXXXX)
 python scripts/01_collect_data.py \
-    --port COM4 \
     --cam1 0 --cam2 1 \
     --task "pick up the red cup" \
     --save_dir ./dataset_v3
 ```
 
 > 카메라 매핑: `--cam1` = wrist 카메라, `--cam2` = top 카메라
+> 시리얼 포트: Mac은 자동 감지됨. 수동 지정 시 `--port /dev/tty.usbserial-XXXXX`
 
 ### 3. 검증
 
@@ -103,26 +104,11 @@ python scripts/03_validate_dataset.py --dataset_dir ./dataset_v3 --fix
 ### 4. 학습 (Pi0-FAST)
 
 ```bash
-# GPU 서버 (A6000+)
-bash scripts/04_train_pi0.sh
-```
+# Mac (MPS, float32, batch_size=1)
+bash scripts/04_train_pi0.sh mac
 
-또는 직접 실행:
-
-```bash
-lerobot-train \
-    --dataset.repo_id=local/dataset_v3 \
-    --dataset.root=./dataset_v3 \
-    --policy.type=pi0_fast \
-    --policy.pretrained_path=lerobot/pi0fast-base \
-    --policy.dtype=bfloat16 \
-    --policy.gradient_checkpointing=true \
-    --policy.chunk_size=5 \
-    --policy.n_action_steps=1 \
-    --batch_size=4 \
-    --steps=100000 \
-    --push_to_hub=false \
-    --output_dir=outputs/pi0fast_dobot
+# GPU 서버 (A6000+, bfloat16, batch_size=4)
+bash scripts/04_train_pi0.sh gpu
 ```
 
 > `n_action_steps=1`: DOBOT의 `move_to(wait=True)`가 ~0.3-1.0초 소요되므로
@@ -131,14 +117,13 @@ lerobot-train \
 ### 5. 추론
 
 ```bash
-# GPU 서버 (A6000):
+# GPU 서버에서 추론 서버 실행:
 PI0_MODEL_PATH=./outputs/pi0fast_dobot_testv2/checkpoints/000100/pretrained_model \
 python server/pi0_server.py
 
-# 로컬 (DOBOT 연결):
+# Mac 로컬에서 클라이언트 실행 (DOBOT 연결):
 python client/pi0_dobot_client.py \
     --server http://<서버IP>:8000 \
-    --port COM4 \
     --task "pick up the red cup"
 ```
 
@@ -151,8 +136,7 @@ python client/pi0_dobot_client.py \
 
 ```bash
 python client/pi0_voice_client.py \
-    --server http://<서버IP>:8000 \
-    --port COM4
+    --server http://<서버IP>:8000
 ```
 
 ---
