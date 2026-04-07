@@ -5,15 +5,15 @@
 #   pip install "lerobot[pi] @ git+https://github.com/huggingface/lerobot.git"
 #
 # 사용법:
-#   bash 04_train_pi0.sh [mac|gpu]
+#   cd Dobot_VLM_VLA
+#   bash scripts/04_train_pi0.sh [mac|gpu]
 
-MODE=${1:-mac}
-DATASET_ROOT="./scripts/dataset_v3"
+MODE=${1:-gpu}
+DATASET_ROOT="./dataset_v3"
 
 if [ "$MODE" = "mac" ]; then
     # ============================================================
-    # Mac (Apple Silicon, 48GB+) — LoRA + 메모리 절약 모드
-    # 느리지만 테스트 가능
+    # Mac (Apple Silicon) — 테스트용
     # ============================================================
     echo "Mac 모드 (MPS, 메모리 절약)"
     KMP_DUPLICATE_LIB_OK=TRUE lerobot-train \
@@ -32,9 +32,9 @@ if [ "$MODE" = "mac" ]; then
         --policy.device=mps
 else
     # ============================================================
-    # GPU 서버 (A6000/A100 48GB+) — 풀 파인튜닝
+    # GPU 서버 (RTX A6000 x2, 48GB each) — 풀 파인튜닝
     # ============================================================
-    echo "GPU 서버 모드 (CUDA)"
+    echo "GPU 서버 모드 (RTX A6000 x2)"
     lerobot-train \
         --dataset.repo_id=local/dataset_v3 \
         --dataset.root=${DATASET_ROOT} \
@@ -44,7 +44,7 @@ else
         --policy.gradient_checkpointing=true \
         --policy.chunk_size=10 \
         --policy.n_action_steps=1 \
-        --batch_size=4 \
+        --batch_size=8 \
         --steps=100000 \
         --output_dir=./outputs/pi0fast_dobot \
         --policy.device=cuda
