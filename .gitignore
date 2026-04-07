@@ -29,6 +29,12 @@ checkpoints/
 *.parquet
 *.mp4
 
+# Model weights (large files)
+model/
+
+# Autosave temp
+.autosave/
+
 # Logs
 *.log
 wandb/

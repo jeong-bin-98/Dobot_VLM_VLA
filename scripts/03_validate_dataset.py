@@ -6,7 +6,7 @@ LeRobot v3.0 데이터셋 검증 및 자동 수정
 
     python 03_validate_dataset.py --dataset_dir ./dataset_v3
     python 03_validate_dataset.py --dataset_dir ./dataset_v3 --fix
-""""""
+"""
 
 import os
 import sys
