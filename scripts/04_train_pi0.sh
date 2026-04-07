@@ -6,18 +6,24 @@
 #
 # 사용법:
 #   cd Dobot_VLM_VLA
-#   bash scripts/04_train_pi0.sh [mac|gpu]
+#   bash scripts/04_train_pi0.sh [mac|gpu] [dataset_path]
+#
+# 예시:
+#   bash scripts/04_train_pi0.sh mac ./dataset_v4
+#   bash scripts/04_train_pi0.sh gpu ./dataset_v5
 
 MODE=${1:-gpu}
-DATASET_ROOT="./dataset_v4"
+DATASET_ROOT=${2:-./dataset_v4}
+DATASET_NAME=$(basename ${DATASET_ROOT})
 
 if [ "$MODE" = "mac" ]; then
     # ============================================================
     # Mac (Apple Silicon) — 테스트용
     # ============================================================
     echo "Mac 모드 (MPS, 메모리 절약)"
+    echo "Dataset: ${DATASET_ROOT}"
     KMP_DUPLICATE_LIB_OK=TRUE lerobot-train \
-        --dataset.repo_id=local/dataset_v4 \
+        --dataset.repo_id=local/${DATASET_NAME} \
         --dataset.root=${DATASET_ROOT} \
         --policy.type=pi0_fast \
         --policy.pretrained_path=lerobot/pi0fast-base \
@@ -35,8 +41,9 @@ else
     # GPU 서버 (RTX A6000 x2, 48GB each) — 풀 파인튜닝
     # ============================================================
     echo "GPU 서버 모드 (RTX A6000 x2)"
+    echo "Dataset: ${DATASET_ROOT}"
     lerobot-train \
-        --dataset.repo_id=local/dataset_v4 \
+        --dataset.repo_id=local/${DATASET_NAME} \
         --dataset.root=${DATASET_ROOT} \
         --policy.type=pi0_fast \
         --policy.pretrained_path=lerobot/pi0fast-base \
