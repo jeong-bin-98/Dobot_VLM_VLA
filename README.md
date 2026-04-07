@@ -104,11 +104,13 @@ python scripts/03_validate_dataset.py --dataset_dir ./dataset_v3 --fix
 ### 4. 학습 (Pi0-FAST)
 
 ```bash
+# bash scripts/04_train_pi0.sh [mac|gpu] [dataset_path]
+
 # Mac (MPS, float32, batch_size=1)
-bash scripts/04_train_pi0.sh mac
+bash scripts/04_train_pi0.sh mac ./dataset_v4
 
 # GPU 서버 (A6000+, bfloat16, batch_size=4)
-bash scripts/04_train_pi0.sh gpu
+bash scripts/04_train_pi0.sh gpu ./dataset_v4
 ```
 
 > `n_action_steps=1`: DOBOT의 `move_to(wait=True)`가 ~0.3-1.0초 소요되므로
