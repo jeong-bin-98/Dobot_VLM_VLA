@@ -49,17 +49,21 @@ if [ ${#DS_ARRAY[@]} -eq 1 ]; then
         --output_dir="$OUTPUT" \
         $RESUME_FLAG
 else
-    # 여러 데이터셋 합쳐서 학습
+    # 여러 데이터셋 합쳐서 학습 (merge 후 학습)
+    MERGED_DIR="./merged_dataset_tmp"
+    MERGED_REPO="local/merged_dataset"
+
+    # merge용 인자 구성
     REPO_IDS=""
     ROOTS=""
     for ds in "${DS_ARRAY[@]}"; do
         name=$(basename "$ds")
         if [ -z "$REPO_IDS" ]; then
-            REPO_IDS="\"local/$name\""
-            ROOTS="\"$ds\""
+            REPO_IDS="local/$name"
+            ROOTS="$ds"
         else
-            REPO_IDS="$REPO_IDS, \"local/$name\""
-            ROOTS="$ROOTS, \"$ds\""
+            REPO_IDS="$REPO_IDS,local/$name"
+            ROOTS="$ROOTS,$ds"
         fi
     done
 
@@ -68,9 +72,27 @@ else
     echo "  GPU: $GPU | Steps: $STEPS"
     echo ""
 
+    # 기존 merged 데이터셋 삭제
+    rm -rf "$MERGED_DIR"
+
+    echo ">>> 데이터셋 합치는 중..."
+    lerobot-edit-dataset \
+        --new_repo_id "$MERGED_REPO" \
+        --new_root "$MERGED_DIR" \
+        --operation.type merge \
+        --operation.repo_ids "[$REPO_IDS]" \
+        --operation.roots "[$ROOTS]"
+
+    if [ $? -ne 0 ]; then
+        echo "데이터셋 합치기 실패!"
+        exit 1
+    fi
+
+    echo ""
+    echo ">>> 학습 시작..."
     CUDA_VISIBLE_DEVICES=$GPU lerobot-train \
-        --dataset.repo_id="[$REPO_IDS]" \
-        --dataset.root="[$ROOTS]" \
+        --dataset.repo_id="$MERGED_REPO" \
+        --dataset.root="$MERGED_DIR" \
         --policy.type=pi0_fast \
         --policy.pretrained_path=lerobot/pi0fast-base \
         --policy.push_to_hub=false \

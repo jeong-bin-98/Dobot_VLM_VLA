@@ -265,6 +265,10 @@ scp -r ./tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integratio
 ./train.sh "./tissue_dataset_v1 ./cup_dataset_v1" 1 10000 outputs/multi_v1
 ```
 
+> 자동으로 데이터셋을 합친 후 학습을 시작합니다.
+> 각 데이터셋의 task (예: "pick up the tissue", "pick up the cup")는 **그대로 유지**됩니다.
+> 추론 시 `--task`로 원하는 물품을 지정하면 해당 동작만 수행합니다.
+
 > 학습이 시작되면 `Training: 0%|...` 진행바가 나옵니다.
 > 학습이 끝나면 `outputs/*/checkpoints/` 안에 모델이 저장됩니다.
 
