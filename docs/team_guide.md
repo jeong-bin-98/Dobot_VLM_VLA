@@ -291,6 +291,39 @@ scp -r ./dataset/tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-in
 > 학습이 시작되면 `Training: 0%|...` 진행바가 나옵니다.
 > 학습이 끝나면 `outputs/*/checkpoints/` 안에 모델이 저장됩니다.
 
+#### 백그라운드 학습 (tmux)
+
+학습은 오래 걸리므로, 터미널을 닫아도 학습이 계속되게 하려면 **tmux**를 사용합니다.
+
+```bash
+# 1. tmux 세션 생성
+tmux new -s train
+
+# 2. tmux 안에서 학습 실행
+./train.sh ./dataset/sn_ti_be_merged_dataset 1 20000 outputs/sn_ti_be_multi_v1
+
+# 3. 학습이 시작되면 tmux에서 빠져나오기
+#    Ctrl+B 누른 뒤 D 누르기
+```
+
+**다음날 와서 학습 상태 확인하기:**
+
+```bash
+# 서버 접속
+ssh busan01@[서버IP]
+
+# tmux 세션에 다시 들어가기
+tmux attach -t train
+```
+
+| tmux 명령 | 동작 |
+|---|---|
+| `tmux new -s train` | 새 세션 생성 |
+| `Ctrl+B` → `D` | 세션에서 빠져나오기 (학습은 계속됨) |
+| `tmux attach -t train` | 세션에 다시 들어가기 |
+| `tmux ls` | 실행 중인 세션 목록 보기 |
+| `tmux kill-session -t train` | 세션 종료 |
+
 #### 학습 중 확인하기
 
 학습이 잘 되고 있는지 보려면 **서버에서 새 터미널 탭**을 열고:
@@ -303,7 +336,7 @@ nvidia-smi
 
 #### 학습 중단하기
 
-학습을 중간에 멈추려면 학습 중인 터미널에서 `Ctrl + C`를 누르세요.
+학습을 중간에 멈추려면 학습 중인 터미널(또는 tmux 세션)에서 `Ctrl + C`를 누르세요.
 
 ---
 

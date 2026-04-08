@@ -46,6 +46,12 @@ if [ ${#DS_ARRAY[@]} -eq 1 ]; then
         --peft.target_modules='["q_proj","v_proj","k_proj","o_proj"]' \
         --batch_size=4 \
         --steps="$STEPS" \
+        --scheduler.type=cosine_decay_with_warmup \
+        --scheduler.peak_lr=2.5e-5 \
+        --scheduler.decay_lr=2.5e-6 \
+        --scheduler.num_warmup_steps=500 \
+        --scheduler.num_decay_steps="$STEPS" \
+        --save_freq=5000 \
         --output_dir="$OUTPUT" \
         $RESUME_FLAG
 else
@@ -83,6 +89,12 @@ else
         --peft.target_modules='["q_proj","v_proj","k_proj","o_proj"]' \
         --batch_size=4 \
         --steps="$STEPS" \
+        --scheduler.type=cosine_decay_with_warmup \
+        --scheduler.peak_lr=2.5e-5 \
+        --scheduler.decay_lr=2.5e-6 \
+        --scheduler.num_warmup_steps=500 \
+        --scheduler.num_decay_steps="$STEPS" \
+        --save_freq=5000 \
         --output_dir="$OUTPUT" \
         $RESUME_FLAG
 fi
