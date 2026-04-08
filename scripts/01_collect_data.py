@@ -677,9 +677,8 @@ class LeRobotV3Collector:
                 ep_dir.mkdir(parents=True, exist_ok=True)
                 frame_path = ep_dir / f"frame_{i:06d}.jpg"
                 cv2.imwrite(str(frame_path), img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-                # Store RELATIVE path (v3.0 -- portable across machines)
-                rel_path = f"images/{cam_name}/chunk-000/episode_{ep_str}/frame_{i:06d}.jpg"
-                self.episode_data[i][cam_name] = {"path": rel_path}
+                # Store ABSOLUTE path (lerobot v0.5.1 호환)
+                self.episode_data[i][cam_name] = {"path": str(frame_path)}
 
         # --- Save episode parquet ---
         df = pd.DataFrame(self.episode_data)

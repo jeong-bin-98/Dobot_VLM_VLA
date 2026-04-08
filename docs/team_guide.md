@@ -1,111 +1,207 @@
 # 팀원용 실행 가이드
 
-> DOBOT 데이터 수집 → 학습 → 추론 실행까지 복사-붙여넣기로 따라하는 가이드
+> DOBOT 데이터 수집 → 서버에 업로드 → 학습 → 추론까지 **복사-붙여넣기만으로** 따라하는 가이드
 
 ---
 
 ## 목차
 1. [사전 준비](#1-사전-준비)
-2. [Part A: 데이터 수집 & 학습](#part-a-데이터-수집--학습)
-3. [Part B: 추론 (서버 접속해서 로봇 실행)](#part-b-추론-서버-접속해서-로봇-실행)
-4. [문제 해결](#문제-해결)
+2. [Part A: 데이터 수집 (Mac에서)](#part-a-데이터-수집-mac에서)
+3. [Part B: 서버 접속 & 학습](#part-b-서버-접속--학습)
+4. [Part C: 추론 (로봇 실행)](#part-c-추론-로봇-실행)
+5. [문제 해결](#문제-해결)
 
 ---
 
 ## 1. 사전 준비
 
-### 하드웨어 연결
-- DOBOT Magician USB 케이블 연결
-- 카메라 2개 USB 연결 (위쪽 카메라 + 손목 카메라)
-- DOBOT 전원 켜기 (초록불 확인)
+### 하드웨어 체크리스트
+
+시작하기 전에 아래 항목을 확인하세요:
+
+- [ ] DOBOT Magician USB 케이블이 Mac에 연결됨
+- [ ] 카메라 2개가 USB로 Mac에 연결됨 (위쪽 카메라 + 손목 카메라)
+- [ ] DOBOT 전원이 켜져 있음 (**초록불** 확인 - 빨간불이면 [문제 해결](#문제-해결) 참고)
+- [ ] Mac에 `lerobot` conda 환경이 설치되어 있음
+
+### 용어 설명
+
+| 용어 | 뜻 |
+|------|-----|
+| **에피소드** | 로봇이 물건을 집는 동작 1회분 (시작~끝) |
+| **스텝** | 에피소드 안에서 팔을 한 번 움직이는 단위 |
+| **데이터셋** | 에피소드 여러 개를 모은 폴더 |
+| **학습 (training)** | 수집한 데이터로 AI 모델을 훈련시키는 과정 |
+| **추론 (inference)** | 학습된 모델이 카메라를 보고 로봇을 움직이는 과정 |
 
 ---
 
-## Part A: 데이터 수집 & 학습
+## Part A: 데이터 수집 (Mac에서)
 
-### A-1. 데이터 수집
+### A-1. 터미널 열고 환경 준비
 
-아래 명령어를 터미널에 복사-붙여넣기하세요.
+1. Mac에서 **터미널** 앱을 엽니다 (Spotlight에서 "터미널" 검색)
+2. 아래 명령어를 **한 줄씩** 복사-붙여넣기합니다:
 
 ```bash
 conda activate lerobot
-cd Dobot_VLM_VLA
-
-python scripts/01_collect_data.py \
-    --task "pick up the [물품 영어이름]" \
-    --save_dir ./[물품이름]_dataset_v[버전번호]
 ```
 
-> **`[물품 영어이름]`** → 수행할 물품 이름을 영어로 적기 (영진이한테 확인)
-> **`[물품이름]_dataset_v[버전번호]`** → 예시: `cup_dataset_v1`, `block_dataset_v2`
+```bash
+cd Dobot_VLM_VLA
+```
 
-#### 물품이 바뀌면?
+> 각 줄을 붙여넣고 **Enter**를 누르세요. 앞에 `(lerobot)` 이 보이면 성공입니다.
 
-**물품마다 프로그램을 따로 실행해야 합니다.** 실행 중에 task를 바꾸는 기능은 없습니다.
+### A-2. 데이터 수집 시작
+
+아래 명령어에서 `[물품 영어이름]`과 `[물품이름]`을 바꿔서 실행하세요.
 
 ```bash
-# 예시: 컵 수집
+python scripts/01_collect_data.py \
+    --task "pick up the [물품 영어이름]" \
+    --save_dir ./[물품이름]_dataset_v1
+```
+
+**예시 - 티슈를 집는 데이터를 수집할 때:**
+
+```bash
+python scripts/01_collect_data.py \
+    --task "pick up the tissue" \
+    --save_dir ./tissue_dataset_v1
+```
+
+**예시 - 컵을 집는 데이터를 수집할 때:**
+
+```bash
 python scripts/01_collect_data.py \
     --task "pick up the cup" \
     --save_dir ./cup_dataset_v1
-
-# 컵 끝나면 ESC로 종료 후, 블록 수집
-python scripts/01_collect_data.py \
-    --task "pick up the block" \
-    --save_dir ./block_dataset_v1
 ```
 
-> 학습할 때 여러 데이터셋을 합쳐서 훈련할 수 있으니, **물품별로 데이터셋을 분리**해서 수집하세요.
+> **물품마다 프로그램을 따로 실행해야 합니다.**
+> 컵 수집이 끝나면 ESC로 종료하고, 다음 물품으로 새로 실행하세요.
 
-#### 키보드 조작법
+### A-3. 수집 조작법
 
-| 키 | 동작 |
-|---|---|
-| **S** | 현재 상태 캡처 (관측 저장) |
-| **E** | 팔을 움직인 후 눌러서 액션 기록 |
-| **V** | 에피소드 저장 (한 세트 완료) |
-| **D** | 현재 에피소드 버리기 |
-| **G** | 그리퍼(흡착) ON/OFF |
-| **Z / C** | 손목 회전 (좌/우 5도씩) |
-| **Q** | 홈 위치로 이동 |
-| **A** | 홈잉 (리밋스위치 캘리브레이션) |
-| **X** | 알람 해제 (빨간불 → 초록불) |
-| **R** | 마지막 에피소드 리플레이 |
-| **W** | 마지막 스텝 되돌리기 (Undo) |
-| **1** | 복구 모드 (이전 세션 이어서) |
-| **ESC** | 종료 |
+프로그램이 실행되면 카메라 미리보기 창이 뜹니다.
 
-#### 수집 순서 (한 에피소드)
+#### 수집 순서 (한 에피소드 = 물건 한 번 집기)
 
 ```
-1. [S] 누르기 → 현재 카메라 영상 + 로봇 상태 캡처
+1. [S] 누르기 → 현재 카메라 영상 + 로봇 위치를 기록
 2. 손으로 DOBOT 팔을 원하는 위치로 이동
-3. [E] 누르기 → 이동한 만큼의 액션(델타) 기록
-4. 1~3번을 여러 번 반복 (보통 5~15스텝)
-5. [V] 누르기 → 에피소드 저장 완료
-6. 다음 에피소드를 위해 1번부터 다시 시작
+3. [E] 누르기 → 이동한 만큼을 기록
+4. 1~3번을 반복 (보통 5~15번)
+5. [V] 누르기 → 이 에피소드를 저장
+6. 물건을 원래 위치에 놓고, 1번부터 다시 시작
 ```
 
-> **Tip:** 에피소드는 최소 **30개 이상** 수집하세요. 많을수록 학습 성능이 좋아집니다.
+#### 키보드 단축키
 
----
+| 키 | 동작 | 언제 사용? |
+|---|---|---|
+| **S** | 현재 상태 캡처 | 팔을 움직이기 **전에** |
+| **E** | 액션 기록 | 팔을 움직인 **후에** |
+| **V** | 에피소드 저장 | 한 세트(물건 집기) **완료 후** |
+| **D** | 현재 에피소드 버리기 | 실수했을 때 |
+| **W** | 마지막 스텝 되돌리기 | 직전 동작만 실수했을 때 |
+| **G** | 그리퍼(흡착) ON/OFF | 물건을 잡거나 놓을 때 |
+| **Z / C** | 손목 회전 (좌/우 5도씩) | 손목 각도 조절 |
+| **Q** | 홈 위치로 이동 | 팔 위치 초기화 |
+| **A** | 홈잉 (캘리브레이션) | 위치가 이상할 때 |
+| **X** | 알람 해제 | DOBOT 빨간불일 때 |
+| **R** | 마지막 에피소드 리플레이 | 잘 됐는지 확인 |
+| **1** | 복구 모드 | 프로그램이 비정상 종료됐을 때 |
+| **ESC** | 종료 | 수집 끝났을 때 |
 
-### A-2. 데이터 검증
+> **에피소드는 최소 30개 이상** 수집하세요. 많을수록 성능이 좋아집니다.
 
-수집이 끝나면 데이터가 정상인지 확인합니다. **데이터셋마다 각각 실행하세요.**
+### A-4. 데이터 검증
+
+수집이 끝나면 데이터가 정상인지 확인합니다.
 
 ```bash
-python scripts/03_validate_dataset.py --dataset_dir ./cup_dataset_v1 --fix
-python scripts/03_validate_dataset.py --dataset_dir ./block_dataset_v1 --fix
+python scripts/03_validate_dataset.py --dataset_dir ./tissue_dataset_v1 --fix
 ```
 
-에러가 나오면 `--fix` 옵션이 자동으로 고쳐줍니다.
+> 에러가 나오면 `--fix` 옵션이 자동으로 고쳐줍니다. 
+> 데이터셋마다 각각 실행하세요.
 
 ---
 
-### A-3. 학습
+## Part B: 서버 접속 & 학습
 
-#### `train.sh` 사용법
+학습은 GPU가 있는 **서버**에서 합니다. Mac에서 수집한 데이터를 서버로 보내고, 서버에서 학습합니다.
+
+### B-1. 서버에 접속하기
+
+Mac 터미널에서 아래 명령어를 입력합니다:
+
+```bash
+ssh busan01@[서버IP]
+```
+
+**예시:**
+
+```bash
+ssh busan01@192.168.0.100
+```
+
+Enter를 누르면 아래처럼 비밀번호를 물어봅니다:
+
+```
+busan01@192.168.0.100's password: 
+```
+
+> **비밀번호를 입력하세요.** 타이핑해도 화면에 아무것도 안 보이는 게 정상입니다. 다 치고 Enter를 누르면 됩니다.
+
+접속 성공하면 프롬프트가 바뀝니다:
+
+```
+busan01@edu02:~$
+```
+
+이제 서버 안에 들어온 것입니다.
+
+### B-2. 서버에서 프로젝트 폴더로 이동
+
+```bash
+cd ~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA
+```
+
+```bash
+source .venv/bin/activate
+```
+
+> `(.venv)` 가 프롬프트 앞에 보이면 성공입니다.
+
+### B-3. Mac에서 서버로 데이터 보내기
+
+**새 터미널 탭**을 열고 (서버 접속 중인 터미널은 그대로 두세요), **Mac에서** 아래를 실행합니다:
+
+```bash
+cd Dobot_VLM_VLA
+```
+
+```bash
+scp -r ./tissue_dataset_v1 busan01@[서버IP]:~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA/
+```
+
+**예시:**
+
+```bash
+scp -r ./tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA/
+```
+
+> 비밀번호를 물어보면 서버 비밀번호를 입력하세요.
+> 파일이 전송되는 동안 진행률이 표시됩니다. 끝날 때까지 기다려주세요.
+
+### B-4. 학습 실행
+
+**서버 터미널**로 돌아가서 아래를 실행합니다.
+
+#### 데이터셋 1개로 학습
 
 ```bash
 ./train.sh [데이터셋경로] [GPU번호] [학습스텝수] [출력경로]
@@ -114,135 +210,150 @@ python scripts/03_validate_dataset.py --dataset_dir ./block_dataset_v1 --fix
 | 인자 | 기본값 | 설명 |
 |------|--------|------|
 | 데이터셋경로 | `./dataset_v3` | 수집한 데이터셋 폴더 |
-| GPU번호 | `1` | 사용할 GPU ID (`nvidia-smi`로 확인) |
-| 학습스텝수 | `100` | 학습 반복 횟수 (본 학습은 10000~100000) |
-| 출력경로 | `outputs/pi0fast_dobot_test` | 체크포인트 저장 위치 |
+| GPU번호 | `1` | 사용할 GPU 번호 (`nvidia-smi`로 확인) |
+| 학습스텝수 | `100` | 학습 반복 횟수 |
+| 출력경로 | `outputs/pi0fast_dobot_test` | 모델 저장 위치 |
 
-#### 데이터셋 1개로 학습
+**예시 - 빠른 테스트 (1~2분):**
 
 ```bash
-# 테스트 (100스텝, 빠르게 확인)
-./train.sh ./cup_dataset_v1 1 100 outputs/cup_test
+./train.sh ./tissue_dataset_v1 1 100 outputs/tissue_test
+```
 
-# 본 학습 (10000스텝)
-./train.sh ./cup_dataset_v1 1 10000 outputs/cup_v1
+**예시 - 본 학습 (수 시간 소요):**
+
+```bash
+./train.sh ./tissue_dataset_v1 1 10000 outputs/tissue_v1
 ```
 
 #### 여러 데이터셋을 합쳐서 학습
 
-물품별로 분리 수집한 데이터셋을 합쳐서 한번에 학습할 수 있습니다.
+여러 물품의 데이터를 합쳐서 한번에 학습할 수 있습니다.
+**데이터셋 경로들을 큰따옴표 안에 공백으로 구분**해서 넣으세요:
 
 ```bash
-lerobot-train \
-    --dataset.repo_id='["local/cup_dataset_v1", "local/block_dataset_v1"]' \
-    --dataset.root='["./cup_dataset_v1", "./block_dataset_v1"]' \
-    --policy.type=pi0_fast \
-    --policy.pretrained_path=lerobot/pi0fast-base \
-    --policy.push_to_hub=false \
-    --policy.dtype=bfloat16 \
-    --policy.gradient_checkpointing=true \
-    --policy.chunk_size=5 \
-    --policy.n_action_steps=1 \
-    --batch_size=4 \
-    --steps=100000 \
-    --output_dir=outputs/pi0fast_dobot
+./train.sh "./tissue_dataset_v1 ./cup_dataset_v1" 1 10000 outputs/multi_v1
 ```
 
+> 학습이 시작되면 `Training: 0%|...` 진행바가 나옵니다.
 > 학습이 끝나면 `outputs/*/checkpoints/` 안에 모델이 저장됩니다.
+
+#### 학습 중 확인하기
+
+학습이 잘 되고 있는지 보려면 **서버에서 새 터미널 탭**을 열고:
+
+```bash
+nvidia-smi
+```
+
+> GPU 사용량이 올라가 있으면 학습이 정상 진행 중입니다.
+
+#### 학습 중단하기
+
+학습을 중간에 멈추려면 학습 중인 터미널에서 `Ctrl + C`를 누르세요.
 
 ---
 
-## Part B: 추론 (서버 접속해서 로봇 실행)
+## Part C: 추론 (로봇 실행)
 
-학습된 모델이 서버에 올라가 있으면, 클라이언트 PC에서 로봇을 실행합니다.
+학습이 끝나면 모델로 로봇을 자동 제어할 수 있습니다.
 
-### B-1. 서버 실행 (서버 담당자가 미리 해둠)
+### C-1. 서버에서 추론 서버 켜기
 
-> 이 부분은 보통 미리 켜져 있습니다. 서버가 안 켜져 있으면 서버 PC에서 아래를 실행하세요.
+**서버 터미널**에서 실행합니다:
+
+```bash
+cd ~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA
+source .venv/bin/activate
+```
 
 ```bash
 PI0_POLICY_TYPE=pi0_fast \
-PI0_MODEL_PATH=./outputs/pi0fast_dobot/checkpoints/last/pretrained_model \
+PI0_MODEL_PATH=./outputs/tissue_v1/checkpoints/last/pretrained_model \
 python server/pi0_server.py
 ```
 
-서버가 잘 켜졌는지 확인:
+> `PI0_MODEL_PATH=` 뒤에 학습 출력 경로를 넣으세요.
+> `로드 완료`가 뜨면 서버 준비 완료입니다. **이 터미널은 닫지 마세요.**
+
+서버가 잘 켜졌는지 확인하려면 **Mac 터미널**에서:
+
 ```bash
-curl http://서버IP:8000/health
+curl http://[서버IP]:8000/health
 ```
 
----
+`"status":"ok"` 가 보이면 성공입니다.
 
-### B-2. 클라이언트 실행 (여러분이 할 일)
+### C-2. Mac에서 클라이언트 실행
 
-DOBOT이 연결된 PC에서 아래 명령어를 실행하세요.
+**DOBOT이 연결된 Mac**에서 새 터미널을 열고:
 
 ```bash
+conda activate lerobot
 cd Dobot_VLM_VLA
+```
 
+```bash
 python client/pi0_dobot_client.py \
-    --server http://서버IP:8000 \
-    --task "pick up the [물품 영어이름]" \
+    --server http://[서버IP]:8000 \
+    --task "pick up the tissue" \
     --chunk-size 2
 ```
 
-> **`서버IP`를 실제 서버 IP 주소로 바꾸세요** (예: `http://192.168.0.100:8000`)
+> `[서버IP]`를 실제 서버 IP 주소로 바꾸세요 (예: `192.168.0.100`)
 
-#### 클라이언트 키보드 조작법
+### C-3. 로봇 조작
+
+프로그램이 실행되면 카메라 미리보기 창이 뜹니다.
+
+```
+1. [SPACE] 한 번 눌러서 테스트 (로봇이 한 스텝 움직임)
+2. 잘 되면 [A] 눌러서 자동 모드 실행
+3. 끝내려면 [ESC]
+```
+
+#### 키보드 단축키
 
 | 키 | 동작 |
 |---|---|
-| **SPACE** | 1회 추론 실행 (한 스텝) |
-| **A** | 자동 모드 (연속 추론 반복) |
+| **SPACE** | 1회 추론 실행 (한 스텝씩 테스트) |
+| **A** | 자동 모드 ON/OFF (연속 추론) |
 | **H** | 홈 위치로 이동 |
 | **G** | 그리퍼 ON/OFF |
 | **T** | 작업(task) 변경 |
 | **L** | LLM 체이닝 모드 |
 | **ESC** | 종료 |
 
-#### 실행 순서
-
-```
-1. 위 명령어를 터미널에 붙여넣기
-2. 카메라 미리보기 창이 뜸
-3. [SPACE] 한 번 눌러서 테스트 (로봇이 한 스텝 움직임)
-4. 잘 되면 [A] 눌러서 자동 모드 실행
-5. 끝내려면 [ESC]
-```
-
----
-
-### B-3. LLM 체이닝 모드 (고급)
-
-LLM이 복잡한 작업을 자동으로 분해해서 실행합니다.
-
-```bash
-python client/pi0_dobot_client.py \
-    --server http://서버IP:8000 \
-    --llm-mode \
-    --llm-backend simple \
-    --goal "책상 위 물건 정리"
-```
-
 ---
 
 ## 문제 해결
+
+### 하드웨어 문제
 
 | 증상 | 해결 방법 |
 |---|---|
 | `DOBOT not found` | USB 케이블 다시 꽂기, 전원 확인 |
 | DOBOT 빨간불 | 프로그램에서 **X** 키 눌러서 알람 해제 |
-| 카메라 안 뜸 | USB 다시 꽂기, 안 되면 `--cam1 1 --cam2 0` 등 번호 바꿔서 실행 |
-| 서버 연결 안 됨 | 서버 IP와 포트(8000) 확인, `curl http://서버IP:8000/health` 테스트 |
-| `ModuleNotFoundError` | `pip install -r requirements.txt` 다시 실행 |
 | DOBOT이 이상하게 움직임 | **Q** 눌러서 홈 위치로, 그래도 안 되면 **A** (홈잉) |
+| 카메라 안 뜸 | USB 다시 꽂기, `--cam1 1 --cam2 0` 번호 바꿔서 실행 |
+
+### 서버/학습 문제
+
+| 증상 | 해결 방법 |
+|---|---|
+| `ssh: connect to host ... Connection refused` | 서버 IP 확인, 서버가 켜져 있는지 확인 |
+| `Permission denied` (ssh) | 비밀번호 다시 확인, 대소문자 주의 |
+| `lerobot-train: command not found` | `source .venv/bin/activate` 실행 안 한 것 |
+| `tasks.parquet not found` | `python scripts/03_validate_dataset.py --dataset_dir ./데이터셋 --fix` |
+| `FileNotFoundError: ... .jpg` | 데이터셋을 scp로 보낼 때 `-r` 옵션 빠뜨린 것. 다시 전송 |
+| `CUDA out of memory` | `--batch_size` 줄이기 (train.sh 안에서 4 → 2) |
+| 서버 연결 안 됨 (추론 시) | 서버 IP/포트 확인, `curl http://서버IP:8000/health` 테스트 |
+| `ModuleNotFoundError` | `pip install -r requirements.txt` 다시 실행 |
 | 데이터 수집 중 프로그램 꺼짐 | 다시 실행 후 **1** 눌러서 복구 모드 |
 
----
+### 카메라 번호 확인법
 
-## 카메라 번호 확인법
-
-어떤 카메라가 몇 번인지 모를 때:
+어떤 카메라가 몇 번인지 모를 때, Mac 터미널에서:
 
 ```bash
 python -c "
@@ -261,3 +372,23 @@ cv2.destroyAllWindows()
 ```
 
 3초간 각 카메라 화면이 뜨니까 어떤 번호가 위쪽/손목인지 확인하세요.
+
+---
+
+## 전체 흐름 요약
+
+```
+[Mac] 데이터 수집 (01_collect_data.py)
+  ↓
+[Mac] 데이터 검증 (03_validate_dataset.py --fix)
+  ↓
+[Mac → 서버] scp로 데이터 전송
+  ↓
+[서버] ssh 접속 → source .venv/bin/activate
+  ↓
+[서버] ./train.sh 로 학습
+  ↓
+[서버] python server/pi0_server.py 로 추론 서버 실행
+  ↓
+[Mac] python client/pi0_dobot_client.py 로 로봇 실행
+```

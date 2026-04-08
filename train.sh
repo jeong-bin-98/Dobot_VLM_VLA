@@ -1,0 +1,73 @@
+#!/bin/bash
+# Pi0-FAST 학습 스크립트
+#
+# 단일 데이터셋:
+#   ./train.sh ./cup_dataset_v1 1 1000 outputs/cup_test
+#
+# 여러 데이터셋 합쳐서:
+#   ./train.sh "./cup_dataset_v1 ./block_dataset_v1" 1 1000 outputs/multi_test
+
+DATASETS="${1:-./dataset_v3}"
+GPU="${2:-1}"
+STEPS="${3:-100}"
+OUTPUT="${4:-outputs/pi0fast_dobot_test}"
+
+# 데이터셋이 여러 개인지 확인 (공백 구분)
+read -ra DS_ARRAY <<< "$DATASETS"
+
+if [ ${#DS_ARRAY[@]} -eq 1 ]; then
+    # 단일 데이터셋
+    DATASET_NAME=$(basename "${DS_ARRAY[0]}")
+    CUDA_VISIBLE_DEVICES=$GPU lerobot-train \
+        --dataset.repo_id="local/$DATASET_NAME" \
+        --dataset.root="${DS_ARRAY[0]}" \
+        --policy.type=pi0_fast \
+        --policy.pretrained_path=lerobot/pi0fast-base \
+        --policy.push_to_hub=false \
+        --policy.dtype=bfloat16 \
+        --policy.gradient_checkpointing=true \
+        --policy.chunk_size=5 \
+        --policy.n_action_steps=1 \
+        --peft.method_type=lora \
+        --peft.r=16 \
+        --peft.target_modules='["q_proj","v_proj","k_proj","o_proj"]' \
+        --batch_size=4 \
+        --steps="$STEPS" \
+        --output_dir="$OUTPUT"
+else
+    # 여러 데이터셋 합쳐서 학습
+    REPO_IDS=""
+    ROOTS=""
+    for ds in "${DS_ARRAY[@]}"; do
+        name=$(basename "$ds")
+        if [ -z "$REPO_IDS" ]; then
+            REPO_IDS="\"local/$name\""
+            ROOTS="\"$ds\""
+        else
+            REPO_IDS="$REPO_IDS, \"local/$name\""
+            ROOTS="$ROOTS, \"$ds\""
+        fi
+    done
+
+    echo "=== 멀티 데이터셋 학습 ==="
+    echo "  데이터셋: ${DS_ARRAY[*]}"
+    echo "  GPU: $GPU | Steps: $STEPS"
+    echo ""
+
+    CUDA_VISIBLE_DEVICES=$GPU lerobot-train \
+        --dataset.repo_id="[$REPO_IDS]" \
+        --dataset.root="[$ROOTS]" \
+        --policy.type=pi0_fast \
+        --policy.pretrained_path=lerobot/pi0fast-base \
+        --policy.push_to_hub=false \
+        --policy.dtype=bfloat16 \
+        --policy.gradient_checkpointing=true \
+        --policy.chunk_size=5 \
+        --policy.n_action_steps=1 \
+        --peft.method_type=lora \
+        --peft.r=16 \
+        --peft.target_modules='["q_proj","v_proj","k_proj","o_proj"]' \
+        --batch_size=4 \
+        --steps="$STEPS" \
+        --output_dir="$OUTPUT"
+fi
