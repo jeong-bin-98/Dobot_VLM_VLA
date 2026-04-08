@@ -105,10 +105,27 @@ python scripts/03_validate_dataset.py --dataset_dir ./block_dataset_v1 --fix
 
 ### A-3. 학습
 
+#### `train.sh` 사용법
+
+```bash
+./train.sh [데이터셋경로] [GPU번호] [학습스텝수] [출력경로]
+```
+
+| 인자 | 기본값 | 설명 |
+|------|--------|------|
+| 데이터셋경로 | `./dataset_v3` | 수집한 데이터셋 폴더 |
+| GPU번호 | `1` | 사용할 GPU ID (`nvidia-smi`로 확인) |
+| 학습스텝수 | `100` | 학습 반복 횟수 (본 학습은 10000~100000) |
+| 출력경로 | `outputs/pi0fast_dobot_test` | 체크포인트 저장 위치 |
+
 #### 데이터셋 1개로 학습
 
 ```bash
-bash scripts/04_train_pi0.sh gpu ./cup_dataset_v1
+# 테스트 (100스텝, 빠르게 확인)
+./train.sh ./cup_dataset_v1 1 100 outputs/cup_test
+
+# 본 학습 (10000스텝)
+./train.sh ./cup_dataset_v1 1 10000 outputs/cup_v1
 ```
 
 #### 여러 데이터셋을 합쳐서 학습
@@ -131,7 +148,7 @@ lerobot-train \
     --output_dir=outputs/pi0fast_dobot
 ```
 
-> 학습이 끝나면 `outputs/pi0fast_dobot/checkpoints/` 안에 모델이 저장됩니다.
+> 학습이 끝나면 `outputs/*/checkpoints/` 안에 모델이 저장됩니다.
 
 ---
 

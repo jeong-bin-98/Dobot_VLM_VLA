@@ -229,10 +229,11 @@ class LeRobotV3Collector:
                 f.write(json.dumps({"task_index": 0, "task": self.task}) + "\n")
         tasks_pq_path = self.save_dir / "meta" / "tasks.parquet"
         if not tasks_pq_path.exists():
-            pq.write_table(
-                pa.Table.from_pandas(pd.DataFrame([{"task_index": 0, "task": self.task}])),
-                tasks_pq_path,
+            tasks_df = pd.DataFrame(
+                {"task_index": [0]},
+                index=pd.Index([self.task], name="task"),
             )
+            pq.write_table(pa.Table.from_pandas(tasks_df), tasks_pq_path)
 
     def _find_last_episode(self):
         """Resume from the last episode index if data already exists."""
