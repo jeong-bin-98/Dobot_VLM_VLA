@@ -139,7 +139,7 @@ class LeRobotV3Collector:
         for cap in (self.cap1, self.cap2):
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
-        print(f"  Cameras: top={self.cam1_id}, front={self.cam2_id}")
+        print(f"  Cameras: wrist={self.cam1_id}, top={self.cam2_id}")
 
         # Directory structure & metadata
         self._create_v3_structure()

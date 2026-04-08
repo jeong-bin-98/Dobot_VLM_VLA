@@ -10,6 +10,7 @@ Pi0-FAST 추론 — Dobot Magician 실시간 구동
         --task "pick up the red cup"
 """
 
+import os
 import sys
 import time
 import argparse
@@ -18,15 +19,65 @@ from typing import Optional
 
 try:
     import cv2
+    import json
     import numpy as np
     import torch
     import pydobot
     from serial.tools import list_ports
+    from safetensors.torch import load_file
 except ImportError as e:
     print(f"Missing dependency: {e}")
     sys.exit(1)
 
 IMG_W, IMG_H = 640, 480
+
+# Safety bounds (DobotController와 동일)
+BOUNDS = {
+    "x": (150, 310),
+    "y": (-150, 150),
+    "z": (-30, 150),
+    "r": (-90, 90),
+}
+
+
+class ModelNormalizer:
+    """모델 학습 시 사용된 정규화 통계를 로드하여 state 정규화 / action 역정규화 수행."""
+
+    def __init__(self, model_path: str):
+        import glob
+        model_path = str(model_path)
+
+        # Input: state 정규화 (mean/std)
+        pre_files = sorted(glob.glob(os.path.join(model_path, "policy_preprocessor_step_*_normalizer_processor.safetensors")))
+        if pre_files:
+            data = load_file(pre_files[0])
+            self.state_mean = data["observation.state.mean"].numpy()
+            self.state_std = data["observation.state.std"].numpy()
+            self.state_std = np.where(self.state_std < 1e-6, 1.0, self.state_std)
+            print(f"  Preprocessor loaded: state mean={self.state_mean}, std={self.state_std}")
+        else:
+            print("  WARNING: preprocessor not found — state will not be normalized")
+            self.state_mean = np.zeros(5)
+            self.state_std = np.ones(5)
+
+        # Output: action 역정규화 (mean/std)
+        post_files = sorted(glob.glob(os.path.join(model_path, "policy_postprocessor_step_*_unnormalizer_processor.safetensors")))
+        if post_files:
+            data = load_file(post_files[0])
+            self.action_mean = data["action.mean"].numpy()
+            self.action_std = data["action.std"].numpy()
+            self.action_std = np.where(self.action_std < 1e-6, 1.0, self.action_std)
+            print(f"  Postprocessor loaded: action mean={self.action_mean}, std={self.action_std}")
+        else:
+            print("  WARNING: postprocessor not found — actions will not be denormalized")
+            self.action_mean = np.zeros(5)
+            self.action_std = np.ones(5)
+
+    def normalize_state(self, raw: np.ndarray) -> np.ndarray:
+        return (np.array(raw, dtype=np.float32) - self.state_mean) / self.state_std
+
+    def unnormalize_action(self, norm: np.ndarray) -> np.ndarray:
+        return norm * self.action_std + self.action_mean
 
 
 def find_dobot_port() -> Optional[str]:
@@ -77,12 +128,12 @@ def get_state(bot: pydobot.Dobot) -> torch.Tensor:
 
 
 def execute_action(bot: pydobot.Dobot, action: list):
-    """예측된 delta action을 Dobot에 실행."""
+    """예측된 delta action을 Dobot에 실행 (안전 경계 적용)."""
     pose = bot.pose()
-    new_x = pose[0] + action[0]
-    new_y = pose[1] + action[1]
-    new_z = pose[2] + action[2]
-    new_r = pose[3] + action[3]
+    new_x = float(np.clip(pose[0] + action[0], *BOUNDS["x"]))
+    new_y = float(np.clip(pose[1] + action[1], *BOUNDS["y"]))
+    new_z = float(np.clip(pose[2] + action[2], *BOUNDS["z"]))
+    new_r = float(np.clip(pose[3] + action[3], *BOUNDS["r"]))
     grip = action[4] > 0.5
 
     bot.move_to(new_x, new_y, new_z, new_r, wait=True)
@@ -99,8 +150,8 @@ def main():
     parser = argparse.ArgumentParser(description="Pi0 Inference on Dobot Magician")
     parser.add_argument("--model_path", type=str, required=True, help="학습된 모델 체크포인트 경로")
     parser.add_argument("--port", type=str, default=None, help="Dobot 시리얼 포트")
-    parser.add_argument("--cam1", type=int, default=0, help="Top 카메라 ID")
-    parser.add_argument("--cam2", type=int, default=1, help="Front 카메라 ID")
+    parser.add_argument("--cam1", type=int, default=0, help="Wrist 카메라 ID (데이터 수집과 동일)")
+    parser.add_argument("--cam2", type=int, default=1, help="Top 카메라 ID (데이터 수집과 동일)")
     parser.add_argument("--task", type=str, default="pick up the red cup", help="태스크 설명")
     parser.add_argument("--max_steps", type=int, default=50, help="최대 스텝 수")
     parser.add_argument("--device", type=str, default=None, help="추론 디바이스 (cuda/mps/cpu)")
@@ -118,11 +169,12 @@ def main():
 
     # 태스크 정규화
     from task_normalizer import TaskNormalizer
-    normalizer = TaskNormalizer()
-    task = normalizer.normalize(task)
+    task_normalizer = TaskNormalizer()
+    task = task_normalizer.normalize(args.task)
 
-    # 모델 로드
+    # 모델 + 정규화 통계 로드
     policy = load_policy(args.model_path, device)
+    normalizer = ModelNormalizer(args.model_path)
 
     # Dobot 연결
     port = args.port or find_dobot_port()
@@ -176,28 +228,32 @@ def main():
         if not running or step >= args.max_steps:
             continue
 
-        # 관측 수집
-        img1 = capture_image(cap1)
-        img2 = capture_image(cap2)
-        state = get_state(bot)
+        # 관측 수집 (cam1=wrist, cam2=top — 데이터 수집과 동일)
+        img_wrist = capture_image(cap1)
+        img_top = capture_image(cap2)
+        raw_state = get_state(bot)
 
-        if img1 is None or img2 is None:
+        if img_wrist is None or img_top is None:
             continue
 
-        # 모델 추론
+        # State 정규화 (학습 시 mean/std로 정규화됨)
+        norm_state = normalizer.normalize_state(raw_state.numpy().flatten())
+        state_t = torch.tensor(norm_state, dtype=torch.float32).unsqueeze(0)
+
+        # 모델 추론 (키 이름은 학습 데이터와 일치해야 함)
         observation = {
-            "observation.images.top": img1.to(device),
-            "observation.images.front": img2.to(device),
-            "observation.state": state.to(device),
+            "observation.images.wrist": img_wrist.to(device),
+            "observation.images.top": img_top.to(device),
+            "observation.state": state_t.to(device),
             "task": task,
         }
 
         with torch.no_grad():
             action = policy.select_action(observation)
 
-        # 첫 번째 액션만 실행 (n_action_steps=1)
+        # 첫 번째 액션 추출 + 역정규화
         action_np = action[0].cpu().numpy() if action.dim() > 1 else action.cpu().numpy()
-        action_list = action_np[:5].tolist()
+        action_list = normalizer.unnormalize_action(action_np[:5]).tolist()
 
         print(f"  Step {step + 1}: delta=({action_list[0]:+.1f}, {action_list[1]:+.1f}, "
               f"{action_list[2]:+.1f}) grip={'ON' if action_list[4] > 0.5 else 'OFF'}")
