@@ -132,12 +132,16 @@ class DobotControl:
         return cur, [tx, ty, tz, tr]
 
     def home(self):
-        self.dobot.move_to(200, 0, 50, 0, wait=True)
         self.grip_on = False
         try:
             self.dobot.grip(False)
         except Exception:
             pass
+        try:
+            self.dobot.suck(False)
+        except Exception:
+            pass
+        self.dobot.move_to(200, 0, 50, 0, wait=True)
 
     def close(self):
         if self.dobot:
@@ -214,9 +218,10 @@ class Pi0StreamClient:
                         continue
 
                     state = self.dobot.get_state()
+                    # cam1=wrist, cam2=top (수집 스크립트와 동일한 매핑)
                     payload = json.dumps({
-                        "image_top": self.cameras.frame_to_b64(f1),
-                        "image_wrist": self.cameras.frame_to_b64(f2),
+                        "image_top": self.cameras.frame_to_b64(f2),
+                        "image_wrist": self.cameras.frame_to_b64(f1),
                         "state": state,
                         "task": self.task,
                         "chunk_size": self.chunk_size,
@@ -280,12 +285,14 @@ class Pi0StreamClient:
 
         except KeyboardInterrupt:
             print("\n  Interrupted.")
+            self.safe_shutdown()
+            return
         except Exception as e:
             print(f"\n  err: {e}")
             import traceback
             traceback.print_exc()
 
-        self.close()
+        self.safe_shutdown()
 
     def _show_preview(self, f1, f2, cycle, auto_mode):
         pose = self.dobot.get_pose()
@@ -304,6 +311,17 @@ class Pi0StreamClient:
 
         combined = np.hstack([f1, f2])
         cv2.imshow("Pi0 WS Streaming", combined)
+
+    def safe_shutdown(self):
+        """Ctrl+C 등 강제종료 시: 홈 복귀 → 그리퍼 해제 → 연결 해제."""
+        print("\n  Safe shutdown...")
+        try:
+            print("  Homing...")
+            self.dobot.home()
+            print("  Home OK")
+        except Exception as e:
+            print(f"  Home failed: {e}")
+        self.close()
 
     def close(self):
         if self.ws:
@@ -342,10 +360,12 @@ def main():
     try:
         client.connect()
         client.run()
+    except KeyboardInterrupt:
+        client.safe_shutdown()
     except Exception as e:
         print(f"\n  err: {e}")
         import traceback
         traceback.print_exc()
-        client.close()
+        client.safe_shutdown()
 if __name__ == "__main__":
     main()

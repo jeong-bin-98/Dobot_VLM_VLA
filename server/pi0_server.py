@@ -13,10 +13,12 @@ import time
 import json
 import base64
 import logging
+import tempfile
 import numpy as np
 from pathlib import Path
 
 import torch
+import draccus
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,6 +48,7 @@ app.add_middleware(
 policy = None
 normalizer = None
 paligemma_tokenizer = None
+tokenizer_max_length = None
 
 
 # Normalization
@@ -53,33 +56,31 @@ class ModelNormalizer:
     def __init__(self, model_path):
         logger.info(f"정규화 통계 로드: {model_path}")
 
-        # Input normalization
-        for name in [
-            "policy_preprocessor_step_5_normalizer_processor.safetensors",
-            "policy_preprocessor_step_2_normalizer_processor.safetensors",
-            "policy_preprocessor_step_0_normalizer_processor.safetensors",
-        ]:
-            path = os.path.join(model_path, name)
-            if os.path.exists(path):
-                data = load_file(path)
-                self.state_mean = data["observation.state.mean"].numpy()
-                self.state_std = data["observation.state.std"].numpy()
-                self.state_std = np.where(self.state_std < 1e-6, 1.0, self.state_std)
-                logger.info(f"   state mean: {self.state_mean}")
-                logger.info(f"   state std:  {self.state_std}")
-                break
+        import glob
+
+        # Input normalization — glob으로 자동 검색
+        pre_files = sorted(glob.glob(os.path.join(model_path, "policy_preprocessor_step_*_normalizer_processor.safetensors")))
+        if pre_files:
+            data = load_file(pre_files[0])
+            self.state_mean = data["observation.state.mean"].numpy()
+            self.state_std = data["observation.state.std"].numpy()
+            self.state_std = np.where(self.state_std < 1e-6, 1.0, self.state_std)
+            logger.info(f"   preprocessor: {os.path.basename(pre_files[0])}")
+            logger.info(f"   state mean: {self.state_mean}")
+            logger.info(f"   state std:  {self.state_std}")
         else:
             logger.warning("   preprocessor 없음")
             self.state_mean = np.zeros(5)
             self.state_std = np.ones(5)
 
-        # 출력 역정규화
-        path = os.path.join(model_path, "policy_postprocessor_step_0_unnormalizer_processor.safetensors")
-        if os.path.exists(path):
-            data = load_file(path)
+        # 출력 역정규화 — glob으로 자동 검색
+        post_files = sorted(glob.glob(os.path.join(model_path, "policy_postprocessor_step_*_unnormalizer_processor.safetensors")))
+        if post_files:
+            data = load_file(post_files[0])
             self.action_mean = data["action.mean"].numpy()
             self.action_std = data["action.std"].numpy()
             self.action_std = np.where(self.action_std < 1e-6, 1.0, self.action_std)
+            logger.info(f"   postprocessor: {os.path.basename(post_files[0])}")
             logger.info(f"   action mean: {self.action_mean}")
             logger.info(f"   action std:  {self.action_std}")
         else:
@@ -136,19 +137,33 @@ def img_to_tensor(img: np.ndarray) -> torch.Tensor:
     )
 
 
+def load_ft_config(model_path: str):
+    """fine-tuned config.json 로드 (draccus 호환)"""
+    from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
+
+    with open(Path(model_path) / "config.json") as f:
+        cfg_data = json.load(f)
+    cfg_data.pop("type", None)
+
+    with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
+        json.dump(cfg_data, f)
+        tmpf = f.name
+
+    with draccus.config_type("json"):
+        return draccus.parse(PI0FastConfig, tmpf, args=[])
+
+
 # 모델 로드
 @app.on_event("startup")
 def startup_load_model():
-    global policy, normalizer
+    global policy, normalizer, paligemma_tokenizer, tokenizer_max_length
 
     logger.info(f"Loading {POLICY_TYPE} model: {MODEL_PATH}")
     t0 = time.time()
 
     if POLICY_TYPE == "pi0_fast":
         from lerobot.policies.pi0_fast.modeling_pi0_fast import PI0FastPolicy
-        from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
         from peft import PeftModel
-        global paligemma_tokenizer
 
         # 1. base 모델 로드
         base_policy = PI0FastPolicy.from_pretrained("lerobot/pi0fast-base")
@@ -161,21 +176,18 @@ def startup_load_model():
         policy = PeftModel.from_pretrained(base_policy, MODEL_PATH)
         policy = policy.merge_and_unload()
         policy._tokenizer_max_length = tokenizer_max_length
+        policy._paligemma_tokenizer = paligemma_tokenizer
 
-        # 4. fine-tuned config 로드 (base config → fine-tuned config로 교체)
-        #    base 모델은 3카메라 + 32차원 state이지만,
-        #    fine-tuned 모델은 2카메라(top, wrist) + 5차원 state
-        ft_config = PI0FastConfig.from_pretrained(MODEL_PATH)
+        # 4. fine-tuned config 로드
+        ft_config = load_ft_config(MODEL_PATH)
         policy.config = ft_config
-        logger.info(f"   Fine-tuned config 적용: cameras={list(ft_config.input_features.keys())}")
-
+        logger.info(f"   Fine-tuned config: cameras={list(ft_config.input_features.keys())}")
         logger.info("   Policy type: Pi0-FAST (autoregressive + LoRA merged)")
     else:
         from lerobot.policies.pi0.modeling_pi0 import PI0Policy
-        global paligemma_tokenizer
         policy = PI0Policy.from_pretrained(MODEL_PATH)
         paligemma_tokenizer = policy._paligemma_tokenizer
-        policy._tokenizer_max_length = policy.config.tokenizer_max_length
+        tokenizer_max_length = policy.config.tokenizer_max_length
         logger.info("   Policy type: Pi0 (flow-matching)")
 
     policy.eval()
@@ -227,17 +239,17 @@ def predict(req: InferenceRequest):
             "observation.state": state_t,
         }
 
-        # 4. 언어 명령 토크나이즈 (항상 필요)
+        # 4. 언어 명령 토크나이즈
         lang = req.language_instruction or "pick up the object"
         tokenized = paligemma_tokenizer(
             lang,
             return_tensors="pt",
             padding="max_length",
-            max_length=policy._tokenizer_max_length,
+            max_length=tokenizer_max_length,
             truncation=True,
         )
         observation["observation.language.tokens"] = tokenized.input_ids.to(DEVICE)
-        observation["observation.language.attention_mask"] = tokenized.attention_mask.to(DEVICE)
+        observation["observation.language.attention_mask"] = tokenized.attention_mask.to(DEVICE).bool()
 
         # 5. 추론
         with torch.no_grad():
