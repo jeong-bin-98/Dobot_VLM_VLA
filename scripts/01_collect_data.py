@@ -222,11 +222,17 @@ class LeRobotV3Collector:
             with open(info_path, "w") as f:
                 json.dump(info, f, indent=2)
 
-        # --- meta/tasks.jsonl (v3.0 format) ---
+        # --- meta/tasks.jsonl + tasks.parquet ---
         tasks_path = self.save_dir / "meta" / "tasks.jsonl"
         if not tasks_path.exists():
             with open(tasks_path, "w") as f:
                 f.write(json.dumps({"task_index": 0, "task": self.task}) + "\n")
+        tasks_pq_path = self.save_dir / "meta" / "tasks.parquet"
+        if not tasks_pq_path.exists():
+            pq.write_table(
+                pa.Table.from_pandas(pd.DataFrame([{"task_index": 0, "task": self.task}])),
+                tasks_pq_path,
+            )
 
     def _find_last_episode(self):
         """Resume from the last episode index if data already exists."""
