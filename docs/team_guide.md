@@ -60,7 +60,7 @@ cd Dobot_VLM_VLA
 ```bash
 python scripts/01_collect_data.py \
     --task "pick up the [물품 영어이름]" \
-    --save_dir ./[물품이름]_dataset_v1
+    --save_dir ./[물품이름]_dataset_v[버전번호]
 ```
 
 **예시 - 티슈를 집는 데이터를 수집할 때:**
@@ -116,6 +116,23 @@ python scripts/01_collect_data.py \
 | **ESC** | 종료 | 수집 끝났을 때 |
 
 > **에피소드는 최소 30개 이상** 수집하세요. 많을수록 성능이 좋아집니다.
+
+### A-3.5. 이어서 수집하기 (Resume)
+
+기존 데이터셋에 에피소드를 추가하고 싶을 때 `--resume` 옵션을 사용합니다.
+
+> **기본 동작:** `--resume` 없이 실행하면 기존 데이터를 **자동 삭제**하고 새로 수집합니다.
+
+```bash
+# 이어서 수집 (기존 에피소드 유지 + 추가 수집)
+python scripts/01_collect_data.py \
+    --task "pick up the tissue" \
+    --save_dir ./tissue_dataset_v1 \
+    --resume
+```
+
+프로그램이 시작되면 기존 에피소드 번호를 이어받아 추가 수집됩니다.
+비정상 종료로 임시 데이터가 남아있으면, **1** 키를 눌러 복구할 수 있습니다.
 
 ### A-4. 데이터 검증
 
@@ -213,6 +230,7 @@ scp -r ./tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integratio
 | GPU번호 | `1` | 사용할 GPU 번호 (`nvidia-smi`로 확인) |
 | 학습스텝수 | `100` | 학습 반복 횟수 |
 | 출력경로 | `outputs/pi0fast_dobot_test` | 모델 저장 위치 |
+| resume | (없음) | `resume` 입력 시 이전 체크포인트에서 이어서 학습 |
 
 **예시 - 빠른 테스트 (1~2분):**
 
@@ -225,6 +243,18 @@ scp -r ./tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integratio
 ```bash
 ./train.sh ./tissue_dataset_v1 1 10000 outputs/tissue_v1
 ```
+
+#### 이어서 학습하기 (Resume)
+
+학습을 중간에 멈췄거나 스텝 수를 늘려서 더 학습하고 싶을 때, 마지막 체크포인트에서 이어서 학습할 수 있습니다.
+**같은 출력경로**에 `resume`을 5번째 인자로 추가하세요:
+
+```bash
+./train.sh ./tissue_dataset_v1 1 20000 outputs/tissue_v1 resume
+```
+
+> 이전에 1000스텝까지 학습했다면, 1000스텝부터 이어서 20000스텝까지 학습합니다.
+> **주의:** 출력경로(`outputs/tissue_v1`)가 이전 학습과 **같아야** 합니다. 다른 경로를 쓰면 체크포인트를 찾지 못합니다.
 
 #### 여러 데이터셋을 합쳐서 학습
 
@@ -297,7 +327,6 @@ cd Dobot_VLM_VLA
 python client/pi0_dobot_client.py \
     --server http://[서버IP]:8000 \
     --task "pick up the tissue" \
-    --chunk-size 2
 ```
 
 > `[서버IP]`를 실제 서버 IP 주소로 바꾸세요 (예: `192.168.0.100`)

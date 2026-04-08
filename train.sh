@@ -6,11 +6,24 @@
 #
 # 여러 데이터셋 합쳐서:
 #   ./train.sh "./cup_dataset_v1 ./block_dataset_v1" 1 1000 outputs/multi_test
+#
+# 이어서 학습 (resume):
+#   ./train.sh ./cup_dataset_v1 1 20000 outputs/cup_test resume
 
 DATASETS="${1:-./dataset_v3}"
 GPU="${2:-1}"
 STEPS="${3:-100}"
 OUTPUT="${4:-outputs/pi0fast_dobot_test}"
+RESUME="${5:-}"
+
+# resume 옵션 설정
+RESUME_FLAG=""
+if [ "$RESUME" = "resume" ] || [ "$RESUME" = "true" ] || [ "$RESUME" = "1" ]; then
+    RESUME_FLAG="--resume=true"
+    echo "=== 이어서 학습 (resume) 모드 ==="
+    echo "  체크포인트 경로: $OUTPUT"
+    echo ""
+fi
 
 # 데이터셋이 여러 개인지 확인 (공백 구분)
 read -ra DS_ARRAY <<< "$DATASETS"
@@ -33,7 +46,8 @@ if [ ${#DS_ARRAY[@]} -eq 1 ]; then
         --peft.target_modules='["q_proj","v_proj","k_proj","o_proj"]' \
         --batch_size=4 \
         --steps="$STEPS" \
-        --output_dir="$OUTPUT"
+        --output_dir="$OUTPUT" \
+        $RESUME_FLAG
 else
     # 여러 데이터셋 합쳐서 학습
     REPO_IDS=""
@@ -69,5 +83,6 @@ else
         --peft.target_modules='["q_proj","v_proj","k_proj","o_proj"]' \
         --batch_size=4 \
         --steps="$STEPS" \
-        --output_dir="$OUTPUT"
+        --output_dir="$OUTPUT" \
+        $RESUME_FLAG
 fi

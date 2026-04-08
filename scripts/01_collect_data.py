@@ -920,7 +920,14 @@ def main():
     parser.add_argument("--task", type=str, default="pick_object", help="Task description for this dataset")
     parser.add_argument("--save_dir", type=str, default="dataset_v3", help="Output dataset directory")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Recording FPS")
+    parser.add_argument("--resume", action="store_true", help="기존 데이터에 이어서 수집 (기본: 기존 데이터 삭제 후 새로 수집)")
     args = parser.parse_args()
+
+    # 기본 모드: 기존 데이터 삭제 후 새로 수집
+    save_path = Path(args.save_dir).resolve()
+    if not args.resume and save_path.exists():
+        shutil.rmtree(save_path)
+        print(f"  기존 데이터 삭제 완료: {save_path}")
 
     port = args.port or find_dobot_port()
     if not port:
