@@ -694,16 +694,23 @@ class LeRobotV3Collector:
             "length": len(self.episode_data),
             "dataset_from_index": self.global_frame_index,
             "dataset_to_index": self.global_frame_index + len(self.episode_data),
+            "data/chunk_index": 0,
+            "data/file_index": self.episode_index,
+            "meta/episodes/chunk_index": 0,
+            "meta/episodes/file_index": 0,
         }
+        # 이미지 키별 chunk/file 인덱스 추가
+        for cam_name in [self.cam1_name, self.cam2_name]:
+            ep_meta[f"images/{cam_name}/chunk_index"] = 0
+            ep_meta[f"images/{cam_name}/file_index"] = self.episode_index
+
         ep_meta_path = self.save_dir / "meta" / "episodes" / "chunk-000" / "episodes.parquet"
         if ep_meta_path.exists():
             existing = pd.read_parquet(ep_meta_path)
             new_df = pd.concat([existing, pd.DataFrame([ep_meta])], ignore_index=True)
         else:
             new_df = pd.DataFrame([ep_meta])
-        pq.write_table(pa.Table.from_pandas(
-            new_df[["episode_index", "task_index", "length", "dataset_from_index", "dataset_to_index"]]
-        ), ep_meta_path)
+        pq.write_table(pa.Table.from_pandas(new_df), ep_meta_path)
 
         # --- Update info.json ---
         info_path = self.save_dir / "meta" / "info.json"
@@ -749,8 +756,18 @@ class LeRobotV3Collector:
                 "std": a.std(0).tolist(),
             },
             # ImageNet normalization defaults
-            self.cam1_name: {"mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
-            self.cam2_name: {"mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+            self.cam1_name: {
+                "mean": [[[0.485]], [[0.456]], [[0.406]]],
+                "std": [[[0.229]], [[0.224]], [[0.225]]],
+                "min": [[[0.0]], [[0.0]], [[0.0]]],
+                "max": [[[1.0]], [[1.0]], [[1.0]]],
+            },
+            self.cam2_name: {
+                "mean": [[[0.485]], [[0.456]], [[0.406]]],
+                "std": [[[0.229]], [[0.224]], [[0.225]]],
+                "min": [[[0.0]], [[0.0]], [[0.0]]],
+                "max": [[[1.0]], [[1.0]], [[1.0]]],
+            },
         }
         with open(self.save_dir / "meta" / "stats.json", "w") as f:
             json.dump(stats, f, indent=2)

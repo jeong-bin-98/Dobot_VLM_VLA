@@ -53,35 +53,13 @@ else
     MERGED_DIR="./merged_dataset_tmp"
     MERGED_REPO="local/merged_dataset"
 
-    # merge용 인자 구성
-    REPO_IDS=""
-    ROOTS=""
-    for ds in "${DS_ARRAY[@]}"; do
-        name=$(basename "$ds")
-        if [ -z "$REPO_IDS" ]; then
-            REPO_IDS="local/$name"
-            ROOTS="$ds"
-        else
-            REPO_IDS="$REPO_IDS,local/$name"
-            ROOTS="$ROOTS,$ds"
-        fi
-    done
-
     echo "=== 멀티 데이터셋 학습 ==="
     echo "  데이터셋: ${DS_ARRAY[*]}"
     echo "  GPU: $GPU | Steps: $STEPS"
     echo ""
 
-    # 기존 merged 데이터셋 삭제
-    rm -rf "$MERGED_DIR"
-
     echo ">>> 데이터셋 합치는 중..."
-    lerobot-edit-dataset \
-        --new_repo_id "$MERGED_REPO" \
-        --new_root "$MERGED_DIR" \
-        --operation.type merge \
-        --operation.repo_ids "[$REPO_IDS]" \
-        --operation.roots "[$ROOTS]"
+    python scripts/merge_datasets.py --datasets "${DS_ARRAY[@]}" --output "$MERGED_DIR"
 
     if [ $? -ne 0 ]; then
         echo "데이터셋 합치기 실패!"

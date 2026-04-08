@@ -8,8 +8,9 @@
 1. [사전 준비](#1-사전-준비)
 2. [Part A: 데이터 수집 (Mac에서)](#part-a-데이터-수집-mac에서)
 3. [Part B: 서버 접속 & 학습](#part-b-서버-접속--학습)
-4. [Part C: 추론 (로봇 실행)](#part-c-추론-로봇-실행)
-5. [문제 해결](#문제-해결)
+4. [Part C: 데이터셋 합치기 (멀티 태스크)](#part-c-데이터셋-합치기-멀티-태스크)
+5. [Part D: 추론 (로봇 실행)](#part-d-추론-로봇-실행)
+6. [문제 해결](#문제-해결)
 
 ---
 
@@ -23,6 +24,22 @@
 - [ ] 카메라 2개가 USB로 Mac에 연결됨 (위쪽 카메라 + 손목 카메라)
 - [ ] DOBOT 전원이 켜져 있음 (**초록불** 확인 - 빨간불이면 [문제 해결](#문제-해결) 참고)
 - [ ] Mac에 `lerobot` conda 환경이 설치되어 있음
+
+### 폴더 구조
+
+```
+Dobot_VLM_VLA/
+├── dataset/                    ← 모든 데이터셋은 여기에 저장
+│   ├── tissue_dataset_v1/
+│   ├── snack_dataset_v1/
+│   ├── beverage_dataset_v1/
+│   └── sn_ti_be_merged_dataset/  ← 합쳐진 데이터셋
+├── outputs/                    ← 학습된 모델이 저장되는 곳
+├── scripts/                    ← 수집/학습/추론 스크립트
+├── server/                     ← 추론 서버
+├── client/                     ← 추론 클라이언트
+└── train.sh                    ← 학습 실행 스크립트
+```
 
 ### 용어 설명
 
@@ -56,11 +73,12 @@ cd Dobot_VLM_VLA
 ### A-2. 데이터 수집 시작
 
 아래 명령어에서 `[물품 영어이름]`과 `[물품이름]`을 바꿔서 실행하세요.
+데이터셋은 `dataset/` 폴더 안에 저장합니다.
 
 ```bash
 python scripts/01_collect_data.py \
     --task "pick up the [물품 영어이름]" \
-    --save_dir ./[물품이름]_dataset_v[버전번호]
+    --save_dir ./dataset/[물품이름]_dataset_v[버전번호]
 ```
 
 **예시 - 티슈를 집는 데이터를 수집할 때:**
@@ -68,19 +86,19 @@ python scripts/01_collect_data.py \
 ```bash
 python scripts/01_collect_data.py \
     --task "pick up the tissue" \
-    --save_dir ./tissue_dataset_v1
+    --save_dir ./dataset/tissue_dataset_v1
 ```
 
-**예시 - 컵을 집는 데이터를 수집할 때:**
+**예시 - 과자를 집는 데이터를 수집할 때:**
 
 ```bash
 python scripts/01_collect_data.py \
-    --task "pick up the cup" \
-    --save_dir ./cup_dataset_v1
+    --task "pick up the snack" \
+    --save_dir ./dataset/snack_dataset_v1
 ```
 
 > **물품마다 프로그램을 따로 실행해야 합니다.**
-> 컵 수집이 끝나면 ESC로 종료하고, 다음 물품으로 새로 실행하세요.
+> 수집이 끝나면 ESC로 종료하고, 다음 물품으로 새로 실행하세요.
 
 ### A-3. 수집 조작법
 
@@ -112,34 +130,36 @@ python scripts/01_collect_data.py \
 | **A** | 홈잉 (캘리브레이션) | 위치가 이상할 때 |
 | **X** | 알람 해제 | DOBOT 빨간불일 때 |
 | **R** | 마지막 에피소드 리플레이 | 잘 됐는지 확인 |
-| **1** | 복구 모드 | 프로그램이 비정상 종료됐을 때 |
+| **1** | 복구/이어서 수집 모드 | 프로그램 재시작 후 기존 데이터 이어서 수집할 때 |
 | **ESC** | 종료 | 수집 끝났을 때 |
 
 > **에피소드는 최소 30개 이상** 수집하세요. 많을수록 성능이 좋아집니다.
 
-### A-3.5. 이어서 수집하기 (Resume)
+### A-4. 이어서 수집하기 (Resume)
 
 기존 데이터셋에 에피소드를 추가하고 싶을 때 `--resume` 옵션을 사용합니다.
 
-> **기본 동작:** `--resume` 없이 실행하면 기존 데이터를 **자동 삭제**하고 새로 수집합니다.
+| 실행 방식 | 동작 |
+|---|---|
+| `--resume` **없이** (기본) | 기존 데이터를 **자동 삭제**하고 새로 수집 |
+| `--resume` **있을 때** | 기존 에피소드 이어서 추가 수집 |
 
 ```bash
-# 이어서 수집 (기존 에피소드 유지 + 추가 수집)
 python scripts/01_collect_data.py \
     --task "pick up the tissue" \
-    --save_dir ./tissue_dataset_v1 \
+    --save_dir ./dataset/tissue_dataset_v1 \
     --resume
 ```
 
 프로그램이 시작되면 기존 에피소드 번호를 이어받아 추가 수집됩니다.
 비정상 종료로 임시 데이터가 남아있으면, **1** 키를 눌러 복구할 수 있습니다.
 
-### A-4. 데이터 검증
+### A-5. 데이터 검증
 
 수집이 끝나면 데이터가 정상인지 확인합니다.
 
 ```bash
-python scripts/03_validate_dataset.py --dataset_dir ./tissue_dataset_v1 --fix
+python scripts/03_validate_dataset.py --dataset_dir ./dataset/tissue_dataset_v1 --fix
 ```
 
 > 에러가 나오면 `--fix` 옵션이 자동으로 고쳐줍니다. 
@@ -202,13 +222,13 @@ cd Dobot_VLM_VLA
 ```
 
 ```bash
-scp -r ./tissue_dataset_v1 busan01@[서버IP]:~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA/
+scp -r ./dataset/tissue_dataset_v1 busan01@[서버IP]:~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA/dataset/
 ```
 
 **예시:**
 
 ```bash
-scp -r ./tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA/
+scp -r ./dataset/tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA/dataset/
 ```
 
 > 비밀번호를 물어보면 서버 비밀번호를 입력하세요.
@@ -235,13 +255,13 @@ scp -r ./tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integratio
 **예시 - 빠른 테스트 (1~2분):**
 
 ```bash
-./train.sh ./tissue_dataset_v1 1 100 outputs/tissue_test
+./train.sh ./dataset/tissue_dataset_v1 1 100 outputs/tissue_test
 ```
 
 **예시 - 본 학습 (수 시간 소요):**
 
 ```bash
-./train.sh ./tissue_dataset_v1 1 10000 outputs/tissue_v1
+./train.sh ./dataset/tissue_dataset_v1 1 10000 outputs/tissue_v1
 ```
 
 #### 이어서 학습하기 (Resume)
@@ -250,7 +270,7 @@ scp -r ./tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integratio
 **같은 출력경로**에 `resume`을 5번째 인자로 추가하세요:
 
 ```bash
-./train.sh ./tissue_dataset_v1 1 20000 outputs/tissue_v1 resume
+./train.sh ./dataset/tissue_dataset_v1 1 20000 outputs/tissue_v1 resume
 ```
 
 > 이전에 1000스텝까지 학습했다면, 1000스텝부터 이어서 20000스텝까지 학습합니다.
@@ -259,37 +279,13 @@ scp -r ./tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-integratio
 #### 여러 데이터셋을 합쳐서 학습
 
 여러 물품의 데이터를 합쳐서 한번에 학습할 수 있습니다.
-
-**방법 1: train.sh로 자동 합치기 + 학습 (간편)**
-
-데이터셋 경로들을 큰따옴표 안에 공백으로 구분해서 넣으세요:
+먼저 데이터셋을 합치고 ([Part C 참고](#part-c-데이터셋-합치기-멀티-태스크)), 합쳐진 데이터셋으로 학습하세요:
 
 ```bash
-./train.sh "./tissue_dataset_v1 ./cup_dataset_v1" 1 10000 outputs/multi_v1
+./train.sh ./dataset/sn_ti_be_merged_dataset 1 10000 outputs/sn_ti_be_multi_v1
 ```
 
-> 자동으로 데이터셋을 합친 후 학습을 시작합니다.
-
-**방법 2: 수동으로 합치기 (합친 데이터셋을 따로 보관하고 싶을 때)**
-
-`lerobot-edit-dataset` 명령어로 데이터셋을 먼저 합칩니다:
-
-```bash
-lerobot-edit-dataset \
-    --new_repo_id local/merged_dataset \
-    --new_root ./merged_dataset \
-    --operation.type merge \
-    --operation.repo_ids "[local/tissue_dataset_v1,local/snack_dataset_v1]" \
-    --operation.roots "[./tissue_dataset_v1,./snack_dataset_v1]"
-```
-
-합친 데이터셋으로 학습합니다:
-
-```bash
-./train.sh ./merged_dataset 1 10000 outputs/multi_v1
-```
-
-> 두 방법 모두 각 데이터셋의 task (예: "pick up the tissue", "pick up the snack")는 **그대로 유지**됩니다.
+> 각 데이터셋의 task (예: "pick up the tissue", "pick up the snack")는 **그대로 유지**됩니다.
 > 추론 시 `--task`로 원하는 물품을 지정하면 해당 동작만 수행합니다.
 
 > 학습이 시작되면 `Training: 0%|...` 진행바가 나옵니다.
@@ -311,11 +307,79 @@ nvidia-smi
 
 ---
 
-## Part C: 추론 (로봇 실행)
+## Part C: 데이터셋 합치기 (멀티 태스크)
+
+여러 물품(예: 티슈, 과자, 음료)의 데이터를 따로 수집한 뒤, **하나의 데이터셋으로 합쳐서** 학습할 수 있습니다.
+합친 모델은 추론 시 `--task`로 원하는 물품을 지정하면 해당 동작만 수행합니다.
+
+### C-1. 데이터셋 합치기
+
+**서버 터미널**에서 실행합니다:
+
+```bash
+cd ~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA
+source .venv/bin/activate
+```
+
+```bash
+python scripts/merge_datasets.py \
+    --datasets ./dataset/tissue_dataset_v1 ./dataset/snack_dataset_v1 ./dataset/beverage_dataset_v1 \
+    --output ./dataset/sn_ti_be_merged_dataset
+```
+
+> 데이터셋을 2개만 합칠 수도 있고, 4개 이상도 가능합니다:
+> ```bash
+> python scripts/merge_datasets.py \
+>     --datasets ./dataset/tissue_dataset_v1 ./dataset/snack_dataset_v1 \
+>     --output ./dataset/sn_ti_merged_dataset
+> ```
+
+실행 결과 예시:
+
+```
+  tissue_dataset_v1: 17 에피소드 추가 (task: pick up the tissue)
+  snack_dataset_v1: 21 에피소드 추가 (task: pick up the snack)
+  beverage_dataset_v1: 15 에피소드 추가 (task: pick up the beverage)
+
+  합치기 완료: ./dataset/sn_ti_be_merged_dataset
+  총 53 에피소드, 412 프레임
+  Tasks: ['pick up the tissue', 'pick up the snack', 'pick up the beverage']
+```
+
+### C-2. 합친 데이터셋으로 학습
+
+```bash
+./train.sh ./dataset/sn_ti_be_merged_dataset 1 10000 outputs/sn_ti_be_multi_v1
+```
+
+### C-3. 합친 모델로 추론
+
+추론 시 `--task`로 원하는 물품을 지정합니다:
+
+```bash
+# 티슈를 집고 싶을 때
+python client/pi0_dobot_client.py \
+    --server http://[서버IP]:8000 \
+    --task "pick up the tissue"
+
+# 과자를 집고 싶을 때
+python client/pi0_dobot_client.py \
+    --server http://[서버IP]:8000 \
+    --task "pick up the snack"
+
+# 음료를 집고 싶을 때
+python client/pi0_dobot_client.py \
+    --server http://[서버IP]:8000 \
+    --task "pick up the beverage"
+```
+
+---
+
+## Part D: 추론 (로봇 실행)
 
 학습이 끝나면 모델로 로봇을 자동 제어할 수 있습니다.
 
-### C-1. 서버에서 추론 서버 켜기
+### D-1. 서버에서 추론 서버 켜기
 
 **서버 터미널**에서 실행합니다:
 
@@ -326,7 +390,7 @@ source .venv/bin/activate
 
 ```bash
 PI0_POLICY_TYPE=pi0_fast \
-PI0_MODEL_PATH=./outputs/tissue_v1/checkpoints/last/pretrained_model \
+PI0_MODEL_PATH=./outputs/sn_ti_be_multi_v1/checkpoints/last/pretrained_model \
 python server/pi0_server.py
 ```
 
@@ -341,7 +405,7 @@ curl http://[서버IP]:8000/health
 
 `"status":"ok"` 가 보이면 성공입니다.
 
-### C-2. Mac에서 클라이언트 실행
+### D-2. Mac에서 클라이언트 실행
 
 **DOBOT이 연결된 Mac**에서 새 터미널을 열고:
 
@@ -353,12 +417,13 @@ cd Dobot_VLM_VLA
 ```bash
 python client/pi0_dobot_client.py \
     --server http://[서버IP]:8000 \
-    --task "pick up the tissue" \
+    --task "pick up the tissue"
 ```
 
 > `[서버IP]`를 실제 서버 IP 주소로 바꾸세요 (예: `192.168.0.100`)
+> `--task`를 바꾸면 다른 물품을 집을 수 있습니다.
 
-### C-3. 로봇 조작
+### D-3. 로봇 조작
 
 프로그램이 실행되면 카메라 미리보기 창이 뜹니다.
 
@@ -400,12 +465,12 @@ python client/pi0_dobot_client.py \
 | `ssh: connect to host ... Connection refused` | 서버 IP 확인, 서버가 켜져 있는지 확인 |
 | `Permission denied` (ssh) | 비밀번호 다시 확인, 대소문자 주의 |
 | `lerobot-train: command not found` | `source .venv/bin/activate` 실행 안 한 것 |
-| `tasks.parquet not found` | `python scripts/03_validate_dataset.py --dataset_dir ./데이터셋 --fix` |
+| `tasks.parquet not found` | `python scripts/03_validate_dataset.py --dataset_dir ./dataset/데이터셋 --fix` |
 | `FileNotFoundError: ... .jpg` | 데이터셋을 scp로 보낼 때 `-r` 옵션 빠뜨린 것. 다시 전송 |
 | `CUDA out of memory` | `--batch_size` 줄이기 (train.sh 안에서 4 → 2) |
 | 서버 연결 안 됨 (추론 시) | 서버 IP/포트 확인, `curl http://서버IP:8000/health` 테스트 |
 | `ModuleNotFoundError` | `pip install -r requirements.txt` 다시 실행 |
-| 데이터 수집 중 프로그램 꺼짐 | 다시 실행 후 **1** 눌러서 복구 모드 |
+| 데이터 수집 중 프로그램 꺼짐 | `--resume`으로 다시 실행, **1** 눌러서 복구 모드 |
 
 ### 카메라 번호 확인법
 
@@ -434,17 +499,20 @@ cv2.destroyAllWindows()
 ## 전체 흐름 요약
 
 ```
-[Mac] 데이터 수집 (01_collect_data.py)
-  ↓
+[Mac] 데이터 수집 (01_collect_data.py → dataset/ 폴더에 저장)
+  ↓  --resume 으로 이어서 수집 가능
 [Mac] 데이터 검증 (03_validate_dataset.py --fix)
   ↓
-[Mac → 서버] scp로 데이터 전송
+[Mac → 서버] scp로 dataset/ 폴더 내 데이터 전송
   ↓
 [서버] ssh 접속 → source .venv/bin/activate
   ↓
-[서버] ./train.sh 로 학습
+[서버] (선택) 여러 데이터셋 합치기 (merge_datasets.py → dataset/ 폴더에 저장)
+  ↓
+[서버] ./train.sh 로 학습 (resume 으로 이어서 학습 가능)
   ↓
 [서버] python server/pi0_server.py 로 추론 서버 실행
   ↓
 [Mac] python client/pi0_dobot_client.py 로 로봇 실행
+       --task 로 원하는 물품 지정
 ```
