@@ -236,7 +236,10 @@ class DobotControl:
         return cur, [tx, ty, tz, tr], False
 
     def _clear_alarm(self):
-        """ALARM 발생 시 명시적 알람 해제 + 큐 재시작 + 시리얼 재연결."""
+        """ALARM/정지 상태에서 Dobot을 깨우는 복구 시퀀스.
+
+        순서: 시리얼 재연결 → 큐 정지 → 알람 해제 → 큐 클리어 → 큐 재시작
+        """
         import gc
         from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
 
@@ -257,20 +260,29 @@ class DobotControl:
         self.dobot = None
         gc.collect()
 
-        print(f"    >> 알람 해제 중... (3초 대기)")
+        print(f"    >> Dobot 복구 중... (3초 대기)")
         time.sleep(3)
 
         try:
             self.dobot = pydobot.Dobot(port=port or self._find_port(), verbose=False)
             time.sleep(1)
 
-            # ClearAllAlarms → 큐 클리어 → 큐 재시작
+            # 1) 큐 정지
+            self.dobot._set_queued_cmd_stop_exec()
+            time.sleep(0.1)
+
+            # 2) 알람 해제
             msg = Message()
             msg.id = IDs.CLEAR_ALL_ALARMS_STATE
             msg.ctrl = CV.ONE
             self.dobot._send_command(msg)
+            time.sleep(0.1)
 
+            # 3) 큐 클리어
             self.dobot._set_queued_cmd_clear()
+            time.sleep(0.1)
+
+            # 4) 큐 재시작
             self.dobot._set_queued_cmd_start_exec()
             time.sleep(0.5)
 
@@ -282,9 +294,9 @@ class DobotControl:
                 pass
             self.dobot.speed(150, 150)
             pose = self.get_pose()
-            print(f"    >> ALARM 복구: 현재 위치 ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
+            print(f"    >> Dobot 복구 완료: ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
         except Exception as e:
-            print(f"    >> ALARM 복구 실패: {e}")
+            print(f"    >> Dobot 복구 실패: {e}")
 
     def home(self):
         self.grip_on = False

@@ -422,7 +422,10 @@ class DobotController:
         return cur, [tx, ty, tz, tr], False
 
     def clear_alarm(self):
-        """ALARM 발생 시 명시적 알람 해제 + 큐 재시작 + 시리얼 재연결."""
+        """ALARM/정지 상태에서 Dobot을 깨우는 복구 시퀀스.
+
+        순서: 시리얼 재연결 → 큐 정지 → 알람 해제 → 큐 클리어 → 큐 재시작
+        """
         import gc
         from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
 
@@ -443,28 +446,36 @@ class DobotController:
         self.dobot = None
         gc.collect()
 
-        print(f"    >> 알람 해제 중... (3초 대기)")
+        print(f"    >> Dobot 복구 중... (3초 대기)")
         time.sleep(3)
 
         try:
-            # 재연결 (생성자가 _set_queued_cmd_start_exec + _set_queued_cmd_clear 호출)
             self.dobot = pydobot.Dobot(port=port or self._find_port(), verbose=False)
             time.sleep(1)
 
-            # ClearAllAlarms → 큐 클리어 → 큐 재시작 (이 순서가 중요)
+            # 1) 큐 정지 — 진행 중인 명령 중단
+            self.dobot._set_queued_cmd_stop_exec()
+            time.sleep(0.1)
+
+            # 2) 알람 해제 — CLEAR_ALL_ALARMS_STATE (cmd 21)
             msg = Message()
             msg.id = IDs.CLEAR_ALL_ALARMS_STATE
             msg.ctrl = CV.ONE
             self.dobot._send_command(msg)
+            time.sleep(0.1)
 
+            # 3) 큐 클리어 — 쌓인 실패 명령 제거
             self.dobot._set_queued_cmd_clear()
+            time.sleep(0.1)
+
+            # 4) 큐 재시작 — 이제 새 명령을 받을 수 있음
             self.dobot._set_queued_cmd_start_exec()
             time.sleep(0.5)
 
             self.dobot.speed(100, 100)
             self.grip_on = False
 
-            # Home 이동 시도 (실패해도 OK)
+            # Home 이동 시도 (실패해도 OK — 현재 위치에서 계속)
             try:
                 self.dobot.move_to(200, 0, 50, 0, wait=True)
             except Exception:
@@ -472,9 +483,9 @@ class DobotController:
 
             self.dobot.speed(150, 150)
             pose = self.get_pose()
-            print(f"    >> ALARM 복구: 현재 위치 ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
+            print(f"    >> Dobot 복구 완료: ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
         except Exception as e:
-            print(f"    >> ALARM 복구 실패: {e}")
+            print(f"    >> Dobot 복구 실패: {e}")
 
     def go_home(self):
         """Home 위치(200,0,50,0)로 이동. 호밍 완료 후 사용."""
