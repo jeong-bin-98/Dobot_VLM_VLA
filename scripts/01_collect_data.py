@@ -64,10 +64,12 @@ class LeRobotV3Collector:
         save_dir: str = "dataset_v3",
         task: str = "pick_object",
         fps: int = DEFAULT_FPS,
+        cam_backend: str = "auto",
     ):
         self.port = port
         self.cam1_id = cam1_id
         self.cam2_id = cam2_id
+        self.cam_backend = cam_backend
         self.save_dir = Path(save_dir).resolve()
         self.task = task
         self.fps = fps
@@ -131,9 +133,26 @@ class LeRobotV3Collector:
             print(f"  >> 카메라 전용 모드로 계속합니다 (Dobot 조작 불가)")
             self.dobot = None
 
-        # Cameras
-        self.cap1 = cv2.VideoCapture(self.cam1_id, cv2.CAP_AVFOUNDATION)
-        self.cap2 = cv2.VideoCapture(self.cam2_id, cv2.CAP_AVFOUNDATION)
+        # Cameras (--cam-backend 옵션으로 백엔드 선택)
+        import platform
+        backend_map = {
+            "dshow": cv2.CAP_DSHOW,
+            "v4l2": cv2.CAP_V4L2,
+            "avfoundation": cv2.CAP_AVFOUNDATION,
+        }
+        if self.cam_backend == "auto":
+            os_name = platform.system()
+            backend = {"Darwin": cv2.CAP_AVFOUNDATION, "Windows": cv2.CAP_DSHOW}.get(os_name, cv2.CAP_V4L2)
+        else:
+            backend = backend_map[self.cam_backend]
+
+        self.cap1 = cv2.VideoCapture(self.cam1_id, backend)
+        self.cap2 = cv2.VideoCapture(self.cam2_id, backend)
+        # 백엔드 실패 시 기본값으로 재시도
+        if not self.cap1.isOpened():
+            self.cap1 = cv2.VideoCapture(self.cam1_id)
+        if not self.cap2.isOpened():
+            self.cap2 = cv2.VideoCapture(self.cam2_id)
         if not self.cap1.isOpened() or not self.cap2.isOpened():
             print("  Camera initialization failed")
             return False
@@ -963,6 +982,9 @@ def main():
     parser.add_argument("--port", type=str, default=None, help="DOBOT serial port (auto-detect if omitted)")
     parser.add_argument("--cam1", type=int, default=0, help="Top camera device ID")
     parser.add_argument("--cam2", type=int, default=1, help="Wrist camera device ID")
+    parser.add_argument("--cam-backend", type=str, default="auto",
+                        choices=["auto", "dshow", "v4l2", "avfoundation"],
+                        help="카메라 백엔드 (auto=OS자동, dshow=Windows, v4l2=Linux, avfoundation=Mac)")
     parser.add_argument("--task", type=str, default="pick_object", help="Task description for this dataset")
     parser.add_argument("--save_dir", type=str, default="dataset_v3", help="Output dataset directory")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS, help="Recording FPS")
@@ -987,6 +1009,7 @@ def main():
         save_dir=args.save_dir,
         task=args.task,
         fps=args.fps,
+        cam_backend=args.cam_backend,
     )
 
     if collector.connect():
