@@ -128,11 +128,14 @@ class CameraCapture:
         cv2.destroyAllWindows()
 # DOBOT controller
 class DobotControl:
+    MAX_CONSECUTIVE_ALARMS = 3
+
     def __init__(self, port: Optional[str] = None):
         port = port or self._find_port()
         self.dobot = pydobot.Dobot(port=port, verbose=False)
         self.dobot.speed(150, 150)
         self.grip_on = False
+        self._alarm_count = 0
         print(f"   DOBOT: {port}")
 
     def _find_port(self) -> str:
@@ -189,9 +192,17 @@ class DobotControl:
             actual = self.dobot.pose()
             error = math.sqrt((actual[0] - tx) ** 2 + (actual[1] - ty) ** 2 + (actual[2] - tz) ** 2)
             if error > ALARM_POS_THRESHOLD:
-                print(f"    >> ALARM 감지 (오차 {error:.1f}mm), 복구 중...")
+                self._alarm_count += 1
+                if self._alarm_count >= self.MAX_CONSECUTIVE_ALARMS:
+                    print(f"    >> ALARM {self._alarm_count}회 연속 — 복구 중단, 현재 위치에서 계속합니다")
+                    self._alarm_count = 0
+                    return cur, [actual[0], actual[1], actual[2], actual[3]], True
+                print(f"    >> ALARM 감지 ({self._alarm_count}/{self.MAX_CONSECUTIVE_ALARMS}, 오차 {error:.1f}mm), 복구 중...")
                 self._clear_alarm()
-                return cur, [200, 0, 50, 0], True  # alarmed=True
+                pose = self.get_pose()
+                return cur, pose, True
+            else:
+                self._alarm_count = 0
             j2 = actual[5]
             if j2 < 5 or j2 > 80:
                 print(f"    >> j2={j2:.1f}deg — singularity 근접 경고")
@@ -217,13 +228,23 @@ class DobotControl:
         return cur, [tx, ty, tz, tr], False
 
     def _clear_alarm(self):
-        """ALARM 발생 시 시리얼 재연결로 복구 후 안전 위치로 이동."""
+        """ALARM 발생 시 명시적 알람 해제 + 시리얼 재연결."""
         import gc
+        from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
+
         port = None
         try:
             ser = getattr(self.dobot, 'ser', None)
             if ser:
                 port = ser.port
+                try:
+                    msg = Message()
+                    msg.id = IDs.CLEAR_ALL_ALARMS_STATE
+                    msg.ctrl = CV.ONE
+                    msg.params = bytearray([])
+                    self.dobot._send_command(msg)
+                except Exception:
+                    pass
                 if ser.is_open:
                     ser.close()
         except Exception:
@@ -236,18 +257,30 @@ class DobotControl:
         self.dobot = None
         gc.collect()
 
-        print(f"    >> 알람 해제 중... (4초 대기)")
-        time.sleep(4)
+        print(f"    >> 알람 해제 중... (3초 대기)")
+        time.sleep(3)
 
         try:
             self.dobot = pydobot.Dobot(port=port or self._find_port(), verbose=False)
             time.sleep(1)
+            try:
+                msg = Message()
+                msg.id = IDs.CLEAR_ALL_ALARMS_STATE
+                msg.ctrl = CV.ONE
+                msg.params = bytearray([])
+                self.dobot._send_command(msg)
+            except Exception:
+                pass
+            time.sleep(0.5)
             self.dobot.speed(100, 100)
             self.grip_on = False
-            self.dobot.move_to(200, 0, 50, 0, wait=True)
+            try:
+                self.dobot.move_to(200, 0, 50, 0, wait=True)
+            except Exception:
+                pass
             self.dobot.speed(150, 150)
             pose = self.get_pose()
-            print(f"    >> ALARM 복구 완료: ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
+            print(f"    >> ALARM 복구: 현재 위치 ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
         except Exception as e:
             print(f"    >> ALARM 복구 실패: {e}")
 
