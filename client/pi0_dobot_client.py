@@ -429,12 +429,12 @@ class DobotController:
         return cur, [tx, ty, tz, tr], False
 
     def clear_alarm(self):
-        """ALARM/정지 상태에서 Dobot을 깨우는 복구 시퀀스.
+        """ALARM/정지 상태에서 Dobot을 깨우는 복구 시퀀스 (타임아웃 10초).
 
         순서: 시리얼 재연결 → 큐 정지 → 알람 해제 → 큐 클리어 → 큐 재시작
-        Lock은 RLock이므로 execute() → clear_alarm() 체인에서 데드락 없음.
         """
         import gc
+        import threading
         from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
 
         port = None
@@ -457,43 +457,58 @@ class DobotController:
         print(f"    >> Dobot 복구 중... (3초 대기)")
         time.sleep(3)
 
-        try:
-            self.dobot = pydobot.Dobot(port=port or self._find_port(), verbose=False)
-            time.sleep(1)
+        # 타임아웃 10초로 복구 시도 — 실패하면 포기
+        result = {"success": False}
 
-            # 1) 큐 정지 — 진행 중인 명령 중단
-            self.dobot._set_queued_cmd_stop_exec()
-            time.sleep(0.1)
-
-            # 2) 알람 해제 — CLEAR_ALL_ALARMS_STATE (cmd 21)
-            msg = Message()
-            msg.id = IDs.CLEAR_ALL_ALARMS_STATE
-            msg.ctrl = CV.ONE
-            self.dobot._send_command(msg)
-            time.sleep(0.1)
-
-            # 3) 큐 클리어 — 쌓인 실패 명령 제거
-            self.dobot._set_queued_cmd_clear()
-            time.sleep(0.1)
-
-            # 4) 큐 재시작 — 이제 새 명령을 받을 수 있음
-            self.dobot._set_queued_cmd_start_exec()
-            time.sleep(0.5)
-
-            self.dobot.speed(100, 100)
-            self.grip_on = False
-
-            # Home 이동 시도 (실패해도 OK — 현재 위치에서 계속)
+        def _reconnect():
             try:
-                self.dobot.move_to(200, 0, 50, 0, wait=True)
-            except Exception:
-                pass
+                self.dobot = pydobot.Dobot(port=port or self._find_port(), verbose=False)
+                time.sleep(0.5)
 
-            self.dobot.speed(150, 150)
-            pose = self.get_pose()
-            print(f"    >> Dobot 복구 완료: ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
-        except Exception as e:
-            print(f"    >> Dobot 복구 실패: {e}")
+                self.dobot._set_queued_cmd_stop_exec()
+                time.sleep(0.1)
+
+                msg = Message()
+                msg.id = IDs.CLEAR_ALL_ALARMS_STATE
+                msg.ctrl = CV.ONE
+                self.dobot._send_command(msg)
+                time.sleep(0.1)
+
+                self.dobot._set_queued_cmd_clear()
+                time.sleep(0.1)
+
+                self.dobot._set_queued_cmd_start_exec()
+                time.sleep(0.5)
+
+                self.dobot.speed(100, 100)
+                self.grip_on = False
+
+                try:
+                    self.dobot.move_to(200, 0, 50, 0, wait=True)
+                except Exception:
+                    pass
+
+                self.dobot.speed(150, 150)
+                result["success"] = True
+            except Exception as e:
+                result["error"] = str(e)
+
+        t = threading.Thread(target=_reconnect, daemon=True)
+        t.start()
+        t.join(timeout=10)
+
+        if t.is_alive():
+            print(f"    >> Dobot 복구 타임아웃 (10초) — 수동 리셋 필요 (전원 OFF/ON)")
+            print(f"    >> [Q] Home / [R] 호밍으로 재시도하세요")
+            # 스레드가 아직 돌고 있지만 daemon이라 프로그램 종료 시 자동 정리
+        elif result["success"]:
+            try:
+                pose = self.get_pose()
+                print(f"    >> Dobot 복구 완료: ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
+            except Exception:
+                print(f"    >> Dobot 복구 완료 (위치 읽기 실패)")
+        else:
+            print(f"    >> Dobot 복구 실패: {result.get('error', 'unknown')}")
 
     def go_home(self):
         """Home 위치(200,0,50,0)로 이동. 호밍 완료 후 사용."""
