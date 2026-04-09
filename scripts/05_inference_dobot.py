@@ -39,10 +39,54 @@ BOUNDS = {
     "z": (-30, 150),
     "r": (-90, 90),
 }
-# Dobot Magician singularity 방지 — 수평 도달거리 제한
-REACH_MIN = 135    # mm — 팔 접힘 한계 (singularity)
-REACH_MAX = 300    # mm — 팔 신장 한계 (singularity)
+# Dobot Magician 기구학 상수
+DOBOT_L1 = 135.0   # mm — rear arm 길이
+DOBOT_L2 = 147.0   # mm — forearm 길이
+SINGULARITY_THRESHOLD = 0.92  # |cos(θ2)| > 이 값이면 singularity 위험
 ALARM_POS_THRESHOLD = 5.0  # mm — move_to 후 오차가 이보다 크면 ALARM 판정
+
+
+def _cos_j2(x, y):
+    """목표점 (x,y)에서의 cos(θ2) 계산. |값| → 1이면 singularity."""
+    r_sq = x ** 2 + y ** 2
+    denom = 2 * DOBOT_L1 * DOBOT_L2
+    return float(np.clip((r_sq - DOBOT_L1 ** 2 - DOBOT_L2 ** 2) / denom, -1.0, 1.0))
+
+
+def _path_crosses_singularity(cx, cy, tx, ty, n_samples=5):
+    """직선 경로 상 n개 지점을 샘플링하여 singularity 관통 여부 판단."""
+    for t in np.linspace(0, 1, n_samples):
+        px = cx + t * (tx - cx)
+        py = cy + t * (ty - cy)
+        if abs(_cos_j2(px, py)) > SINGULARITY_THRESHOLD:
+            return True
+    return False
+
+
+def _compute_via_point(cx, cy, tx, ty):
+    """Singularity 영역을 우회하는 경유점 계산."""
+    safe_r = math.sqrt(DOBOT_L1 ** 2 + DOBOT_L2 ** 2)
+
+    mx, my = (cx + tx) / 2, (cy + ty) / 2
+    mid_r = math.sqrt(mx ** 2 + my ** 2)
+
+    if mid_r > 1e-3:
+        scale = safe_r / mid_r
+        vx, vy = mx * scale, my * scale
+    else:
+        dx, dy = tx - cx, ty - cy
+        path_len = math.sqrt(dx ** 2 + dy ** 2)
+        if path_len > 1e-3:
+            vx, vy = -dy / path_len * safe_r, dx / path_len * safe_r
+        else:
+            vx, vy = safe_r, 0
+
+    vx = float(np.clip(vx, *BOUNDS["x"]))
+    vy = float(np.clip(vy, *BOUNDS["y"]))
+
+    if abs(_cos_j2(vx, vy)) > SINGULARITY_THRESHOLD:
+        return None
+    return (vx, vy)
 
 
 class ModelNormalizer:
@@ -133,38 +177,54 @@ def get_state(bot: pydobot.Dobot) -> torch.Tensor:
 
 
 def execute_action(bot: pydobot.Dobot, action: list) -> pydobot.Dobot:
-    """예측된 delta action을 Dobot에 실행 (안전 경계 + singularity 방지).
+    """예측된 delta action을 Dobot에 실행 (cos(θ2) singularity 감지 + 경유점 회피).
 
     ALARM 복구 시 bot이 재생성되므로, 반환된 bot을 사용해야 합니다.
     """
     pose = bot.pose()
     cur = [pose[0], pose[1], pose[2], pose[3]]
-    new_x = float(np.clip(cur[0] + action[0], *BOUNDS["x"]))
-    new_y = float(np.clip(cur[1] + action[1], *BOUNDS["y"]))
-    new_z = float(np.clip(cur[2] + action[2], *BOUNDS["z"]))
-    new_r = float(np.clip(cur[3] + action[3], *BOUNDS["r"]))
+    tx = float(np.clip(cur[0] + action[0], *BOUNDS["x"]))
+    ty = float(np.clip(cur[1] + action[1], *BOUNDS["y"]))
+    tz = float(np.clip(cur[2] + action[2], *BOUNDS["z"]))
+    tr = float(np.clip(cur[3] + action[3], *BOUNDS["r"]))
     grip = action[4] > 0.5
 
-    # 1단계: singularity 사전 검증 — 수평 도달거리 체크
-    dist = math.sqrt(new_x ** 2 + new_y ** 2)
-    if dist > REACH_MAX or dist < REACH_MIN:
-        safe_dist = float(np.clip(dist, REACH_MIN + 10, REACH_MAX - 10))
-        scale = safe_dist / dist if dist > 0 else 1.0
-        new_x = float(cur[0] + (new_x - cur[0]) * scale)
-        new_y = float(cur[1] + (new_y - cur[1]) * scale)
-        print(f"  >> Singularity 회피: dist={dist:.0f}->{safe_dist:.0f}mm")
+    # 1단계: cos(θ2) 기반 singularity 감지
+    target_cos = _cos_j2(tx, ty)
+    target_dangerous = abs(target_cos) > SINGULARITY_THRESHOLD
+    path_dangerous = _path_crosses_singularity(cur[0], cur[1], tx, ty)
 
-    # 2단계: 이동
-    bot.move_to(new_x, new_y, new_z, new_r, wait=True)
+    if target_dangerous or path_dangerous:
+        via = _compute_via_point(cur[0], cur[1], tx, ty)
+        if via:
+            print(f"  >> Singularity 회피: 경유점 ({via[0]:.0f}, {via[1]:.0f})mm "
+                  f"[cos(θ2): 목표={target_cos:+.2f}]")
+            bot.move_to(via[0], via[1], tz, tr, wait=True)
 
-    # 3단계: ALARM 감지
+        if target_dangerous:
+            safe_r = math.sqrt(DOBOT_L1 ** 2 + DOBOT_L2 ** 2)
+            dist = math.sqrt(tx ** 2 + ty ** 2)
+            if dist > 1e-3:
+                scale = safe_r / dist
+                tx, ty = float(tx * scale), float(ty * scale)
+                tx = float(np.clip(tx, *BOUNDS["x"]))
+                ty = float(np.clip(ty, *BOUNDS["y"]))
+            print(f"  >> 목표 스케일다운: ({tx:.0f}, {ty:.0f})mm")
+
+    # 2단계: 최종 목표로 이동
+    bot.move_to(tx, ty, tz, tr, wait=True)
+
+    # 3단계: ALARM 감지 + j2 관절각도 사후 검증
     try:
         actual = bot.pose()
-        error = math.sqrt((actual[0] - new_x) ** 2 + (actual[1] - new_y) ** 2 + (actual[2] - new_z) ** 2)
+        error = math.sqrt((actual[0] - tx) ** 2 + (actual[1] - ty) ** 2 + (actual[2] - tz) ** 2)
         if error > ALARM_POS_THRESHOLD:
             print(f"  >> ALARM 감지 (오차 {error:.1f}mm), 복구 중...")
             bot = _clear_alarm(bot)
             return bot
+        j2 = actual[5]
+        if j2 < 5 or j2 > 80:
+            print(f"  >> j2={j2:.1f}deg — singularity 근접 경고")
     except Exception:
         pass
 
@@ -181,6 +241,7 @@ def execute_action(bot: pydobot.Dobot, action: list) -> pydobot.Dobot:
 
 def _clear_alarm(bot: pydobot.Dobot) -> pydobot.Dobot:
     """ALARM 발생 시 시리얼 재연결로 복구 후 안전 위치로 이동."""
+    import gc
     port = None
     try:
         ser = getattr(bot, 'ser', None)
@@ -191,17 +252,32 @@ def _clear_alarm(bot: pydobot.Dobot) -> pydobot.Dobot:
     except Exception:
         pass
 
-    time.sleep(3)
+    # 기존 객체 완전 제거
+    try:
+        del bot
+    except Exception:
+        pass
+    gc.collect()
+
+    print(f"  >> 알람 해제 중... (4초 대기)")
+    time.sleep(4)
 
     try:
-        new_bot = pydobot.Dobot(port=port, verbose=False) if port else bot
-        new_bot.speed(150, 150)
+        new_bot = pydobot.Dobot(port=port, verbose=False)
+        time.sleep(1)
+        new_bot.speed(100, 100)
         new_bot.move_to(200, 0, 50, 0, wait=True)
-        print(f"  >> ALARM 복구 완료, 안전 위치로 이동")
+        new_bot.speed(150, 150)
+        pose = new_bot.pose()
+        print(f"  >> ALARM 복구 완료: ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
         return new_bot
     except Exception as e:
         print(f"  >> ALARM 복구 실패: {e}")
-        return bot
+        # 최후 수단: 새 연결 시도
+        try:
+            return pydobot.Dobot(port=port, verbose=False)
+        except Exception:
+            raise RuntimeError(f"Dobot 재연결 불가: {e}")
 
 
 def main():

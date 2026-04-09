@@ -39,10 +39,54 @@ BOUNDS = {
     "z": (-30, 150),
     "r": (-90, 90),
 }
-# Dobot Magician singularity 방지 — 수평 도달거리 제한
-REACH_MIN = 135    # mm — 팔 접힘 한계 (singularity)
-REACH_MAX = 300    # mm — 팔 신장 한계 (singularity)
+# Dobot Magician 기구학 상수
+DOBOT_L1 = 135.0   # mm — rear arm 길이
+DOBOT_L2 = 147.0   # mm — forearm 길이
+SINGULARITY_THRESHOLD = 0.92  # |cos(θ2)| > 이 값이면 singularity 위험
 ALARM_POS_THRESHOLD = 5.0  # mm — move_to 후 오차가 이보다 크면 ALARM 판정
+
+
+def _cos_j2(x, y):
+    """목표점 (x,y)에서의 cos(θ2) 계산. |값| → 1이면 singularity."""
+    r_sq = x ** 2 + y ** 2
+    denom = 2 * DOBOT_L1 * DOBOT_L2
+    return float(np.clip((r_sq - DOBOT_L1 ** 2 - DOBOT_L2 ** 2) / denom, -1.0, 1.0))
+
+
+def _path_crosses_singularity(cx, cy, tx, ty, n_samples=5):
+    """직선 경로 상 n개 지점을 샘플링하여 singularity 관통 여부 판단."""
+    for t in np.linspace(0, 1, n_samples):
+        px = cx + t * (tx - cx)
+        py = cy + t * (ty - cy)
+        if abs(_cos_j2(px, py)) > SINGULARITY_THRESHOLD:
+            return True
+    return False
+
+
+def _compute_via_point(cx, cy, tx, ty):
+    """Singularity 영역을 우회하는 경유점 계산."""
+    safe_r = math.sqrt(DOBOT_L1 ** 2 + DOBOT_L2 ** 2)
+
+    mx, my = (cx + tx) / 2, (cy + ty) / 2
+    mid_r = math.sqrt(mx ** 2 + my ** 2)
+
+    if mid_r > 1e-3:
+        scale = safe_r / mid_r
+        vx, vy = mx * scale, my * scale
+    else:
+        dx, dy = tx - cx, ty - cy
+        path_len = math.sqrt(dx ** 2 + dy ** 2)
+        if path_len > 1e-3:
+            vx, vy = -dy / path_len * safe_r, dx / path_len * safe_r
+        else:
+            vx, vy = safe_r, 0
+
+    vx = float(np.clip(vx, *BOUNDS["x"]))
+    vy = float(np.clip(vy, *BOUNDS["y"]))
+
+    if abs(_cos_j2(vx, vy)) > SINGULARITY_THRESHOLD:
+        return None
+    return (vx, vy)
 
 # Gripper timing -- adjust on-site
 GRIPPER_DELAY_S = 0.1
@@ -107,7 +151,7 @@ class DobotControl:
         return self.get_pose() + [1.0 if self.grip_on else 0.0]
 
     def execute(self, delta) -> tuple:
-        """Apply delta action with singularity prevention. Returns (current_pos, target_pos)."""
+        """Apply delta action with cos(θ2) singularity avoidance + via-point."""
         cur = self.get_pose()
 
         tx = float(np.clip(cur[0] + delta[0], *BOUNDS["x"]))
@@ -115,26 +159,42 @@ class DobotControl:
         tz = float(np.clip(cur[2] + delta[2], *BOUNDS["z"]))
         tr = float(np.clip(cur[3] + delta[3], *BOUNDS["r"]))
 
-        # 1단계: singularity 사전 검증 — 수평 도달거리 체크
-        dist = math.sqrt(tx ** 2 + ty ** 2)
-        if dist > REACH_MAX or dist < REACH_MIN:
-            safe_dist = float(np.clip(dist, REACH_MIN + 10, REACH_MAX - 10))
-            scale = safe_dist / dist if dist > 0 else 1.0
-            tx = float(cur[0] + (tx - cur[0]) * scale)
-            ty = float(cur[1] + (ty - cur[1]) * scale)
-            print(f"    >> Singularity 회피: dist={dist:.0f}->{safe_dist:.0f}mm")
+        # 1단계: cos(θ2) 기반 singularity 감지
+        target_cos = _cos_j2(tx, ty)
+        target_dangerous = abs(target_cos) > SINGULARITY_THRESHOLD
+        path_dangerous = _path_crosses_singularity(cur[0], cur[1], tx, ty)
 
-        # 2단계: 이동
+        if target_dangerous or path_dangerous:
+            via = _compute_via_point(cur[0], cur[1], tx, ty)
+            if via:
+                print(f"    >> Singularity 회피: 경유점 ({via[0]:.0f}, {via[1]:.0f})mm "
+                      f"[cos(θ2): 목표={target_cos:+.2f}]")
+                self.dobot.move_to(via[0], via[1], tz, tr, wait=True)
+
+            if target_dangerous:
+                safe_r = math.sqrt(DOBOT_L1 ** 2 + DOBOT_L2 ** 2)
+                dist = math.sqrt(tx ** 2 + ty ** 2)
+                if dist > 1e-3:
+                    scale = safe_r / dist
+                    tx, ty = float(tx * scale), float(ty * scale)
+                    tx = float(np.clip(tx, *BOUNDS["x"]))
+                    ty = float(np.clip(ty, *BOUNDS["y"]))
+                print(f"    >> 목표 스케일다운: ({tx:.0f}, {ty:.0f})mm")
+
+        # 2단계: 최종 목표로 이동
         self.dobot.move_to(tx, ty, tz, tr, wait=True)
 
-        # 3단계: ALARM 감지 — 실제 도착 위치와 목표 비교
+        # 3단계: ALARM 감지 + j2 관절각도 사후 검증
         try:
             actual = self.dobot.pose()
             error = math.sqrt((actual[0] - tx) ** 2 + (actual[1] - ty) ** 2 + (actual[2] - tz) ** 2)
             if error > ALARM_POS_THRESHOLD:
                 print(f"    >> ALARM 감지 (오차 {error:.1f}mm), 복구 중...")
                 self._clear_alarm()
-                return cur, [200, 0, 50, 0]
+                return cur, [200, 0, 50, 0], True  # alarmed=True
+            j2 = actual[5]
+            if j2 < 5 or j2 > 80:
+                print(f"    >> j2={j2:.1f}deg — singularity 근접 경고")
         except Exception:
             pass
 
@@ -154,10 +214,11 @@ class DobotControl:
                     pass
             print(f"    Grip: {'ON' if self.grip_on else 'OFF'}")
 
-        return cur, [tx, ty, tz, tr]
+        return cur, [tx, ty, tz, tr], False
 
     def _clear_alarm(self):
         """ALARM 발생 시 시리얼 재연결로 복구 후 안전 위치로 이동."""
+        import gc
         port = None
         try:
             ser = getattr(self.dobot, 'ser', None)
@@ -168,17 +229,25 @@ class DobotControl:
         except Exception:
             pass
 
-        time.sleep(3)
+        try:
+            del self.dobot
+        except Exception:
+            pass
+        self.dobot = None
+        gc.collect()
+
+        print(f"    >> 알람 해제 중... (4초 대기)")
+        time.sleep(4)
 
         try:
-            if port:
-                self.dobot = pydobot.Dobot(port=port, verbose=False)
-            else:
-                self.dobot = pydobot.Dobot(port=self._find_port(), verbose=False)
-            self.dobot.speed(150, 150)
+            self.dobot = pydobot.Dobot(port=port or self._find_port(), verbose=False)
+            time.sleep(1)
+            self.dobot.speed(100, 100)
             self.grip_on = False
             self.dobot.move_to(200, 0, 50, 0, wait=True)
-            print(f"    >> ALARM 복구 완료, 안전 위치로 이동")
+            self.dobot.speed(150, 150)
+            pose = self.get_pose()
+            print(f"    >> ALARM 복구 완료: ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")
         except Exception as e:
             print(f"    >> ALARM 복구 실패: {e}")
 
@@ -295,7 +364,7 @@ class Pi0StreamClient:
 
                     # 4) Execute actions
                     for i, delta in enumerate(actions):
-                        cur, tgt = self.dobot.execute(delta)
+                        cur, tgt, alarmed = self.dobot.execute(delta)
                         total_ms = (time.time() - t_total) * 1000
 
                         print(
@@ -306,6 +375,9 @@ class Pi0StreamClient:
                             f"G:{'ON' if self.dobot.grip_on else 'OFF'} "
                             f"infer:{infer_ms:.0f}ms ws:{ws_ms:.0f}ms total:{total_ms:.0f}ms"
                         )
+                        if alarmed:
+                            print(f"  >> ALARM 복구됨 — 나머지 action 스킵, 새로 관측합니다")
+                            break
 
                     cycle += 1
 
