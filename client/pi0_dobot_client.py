@@ -310,9 +310,11 @@ class DobotController:
     MAX_CONSECUTIVE_ALARMS = 3  # 연속 ALARM 이 횟수 초과 시 중단
 
     def __init__(self, port=None):
+        import threading
         self.dobot = None
         self.grip_on = False
         self._alarm_count = 0  # 연속 ALARM 카운터
+        self._lock = threading.RLock()  # dobot 접근 동기화 (RLock: 재진입 가능)
         port = port or self._find_port()
 
         self.dobot = pydobot.Dobot(port=port, verbose=False)
@@ -331,8 +333,9 @@ class DobotController:
         return ports[0].device if ports else "/dev/tty.usbserial-0001"
 
     def get_pose(self):
-        r = self.dobot.pose()
-        return [round(r[i], 2) for i in range(4)]
+        with self._lock:
+            r = self.dobot.pose()
+            return [round(r[i], 2) for i in range(4)]
 
     def get_state(self):
         """[x, y, z, r, gripper] 5차원 state 반환"""
@@ -347,6 +350,10 @@ class DobotController:
         - ALARM 감지 및 자동 복구
         - j2 관절각도 사후 검증
         """
+        with self._lock:
+            return self._execute_inner(delta)
+
+    def _execute_inner(self, delta):
         cur = self.get_pose()
 
         tx = float(np.clip(cur[0] + delta[0], *BOUNDS["x"]))
@@ -425,6 +432,7 @@ class DobotController:
         """ALARM/정지 상태에서 Dobot을 깨우는 복구 시퀀스.
 
         순서: 시리얼 재연결 → 큐 정지 → 알람 해제 → 큐 클리어 → 큐 재시작
+        Lock은 RLock이므로 execute() → clear_alarm() 체인에서 데드락 없음.
         """
         import gc
         from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
@@ -489,34 +497,35 @@ class DobotController:
 
     def go_home(self):
         """Home 위치(200,0,50,0)로 이동. 호밍 완료 후 사용."""
-        try:
-            print("  Home 위치로 이동 중...")
-            self.dobot.move_to(200, 0, 50, 0, wait=True)
-            self.grip_on = False
+        with self._lock:
             try:
-                self.dobot.grip(False)
-            except:
-                pass
-            print("  Home 위치 도착: (200, 0, 50, 0)")
-        except Exception as e:
-            print(f"  Go Home 실패: {e}")
+                print("  Home 위치로 이동 중...")
+                self.dobot.move_to(200, 0, 50, 0, wait=True)
+                self.grip_on = False
+                try:
+                    self.dobot.grip(False)
+                except:
+                    pass
+                print("  Home 위치 도착: (200, 0, 50, 0)")
+            except Exception as e:
+                print(f"  Go Home 실패: {e}")
 
     def homing(self):
         """호밍 (리밋스위치 기반 원점 복귀)."""
         from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
-        try:
-            print("  호밍 중... (리밋스위치 원점 복귀)")
-            # SET_HOME_CMD (id=31) — queued, 리밋스위치 찍고 원점 설정
-            msg = Message()
-            msg.id = IDs.SET_HOME_CMD
-            msg.ctrl = CV.THREE
-            msg.params = bytearray(4)  # reserved 4 bytes (0)
-            self.dobot._send_command(msg, wait=True)
-            self.grip_on = False
-            pose = self.get_pose()
-            print(f"  호밍 완료: x={pose[0]:.1f} y={pose[1]:.1f} z={pose[2]:.1f} r={pose[3]:.1f}")
-        except Exception as e:
-            print(f"  호밍 실패: {e}")
+        with self._lock:
+            try:
+                print("  호밍 중... (리밋스위치 원점 복귀)")
+                msg = Message()
+                msg.id = IDs.SET_HOME_CMD
+                msg.ctrl = CV.THREE
+                msg.params = bytearray(4)
+                self.dobot._send_command(msg, wait=True)
+                self.grip_on = False
+                pose = self.get_pose()
+                print(f"  호밍 완료: x={pose[0]:.1f} y={pose[1]:.1f} z={pose[2]:.1f} r={pose[3]:.1f}")
+            except Exception as e:
+                print(f"  호밍 실패: {e}")
 
     def close(self):
         if self.dobot:
