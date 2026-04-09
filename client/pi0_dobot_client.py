@@ -673,7 +673,7 @@ class Pi0DobotPipeline:
                         print(f"  [DEBUG] delta[0]: {actions[0]}\n")
 
                     for i, delta in enumerate(actions):
-                        cur, tgt = self.dobot.execute(delta)
+                        cur, tgt, alarmed = self.dobot.execute(delta)
                         print(
                             f"  Cycle {cycle+1} [{i+1}/{len(actions)}] "
                             f"Δ[{delta[0]:+.1f},{delta[1]:+.1f},{delta[2]:+.1f},{delta[3]:+.1f},{delta[4]:.2f}] "
@@ -681,6 +681,9 @@ class Pi0DobotPipeline:
                             f"G:{'ON' if self.dobot.grip_on else 'OFF'} "
                             f"서버:{dt_ms:.0f}ms"
                         )
+                        if alarmed:
+                            print(f"  >> ALARM 복구됨 — 새로 관측합니다")
+                            break
                     cycle += 1
 
                 elif key == ord('a'):

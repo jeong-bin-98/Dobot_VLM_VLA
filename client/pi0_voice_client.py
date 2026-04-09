@@ -138,13 +138,16 @@ class VoiceControlPipeline:
 
             # 액션 실행
             for i, delta in enumerate(actions):
-                cur, tgt = self.dobot.execute(delta)
+                cur, tgt, alarmed = self.dobot.execute(delta)
                 print(
                     f"  Cycle {cycle+1} [{i+1}/{len(actions)}] "
                     f"Δ[{delta[0]:+.1f},{delta[1]:+.1f},{delta[2]:+.1f}] "
                     f"G:{'ON' if self.dobot.grip_on else 'OFF'} "
                     f"{dt_ms:.0f}ms"
                 )
+                if alarmed:
+                    print(f"  >> ALARM 복구됨 — 새로 관측합니다")
+                    break
 
         print(f"  === 태스크 완료 ===\n")
 
