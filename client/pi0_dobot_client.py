@@ -657,9 +657,12 @@ class Pi0DobotPipeline:
     # -----------------------------------------
     def run_manual(self, max_cycles=50):
         """
-        키보드 제어 수동 모드
-        [SPACE] 1회 추론  [A] 자동  [H] 홈  [G] 그리퍼  [ESC] 종료
+        멀티스레드 키보드 제어 모드
+        - 메인 스레드: 카메라 캡처 + 프리뷰 (30fps)
+        - 추론 스레드: 서버 요청 + 로봇 실행 (비동기)
         """
+        import threading
+
         print(f"""
 +-----------------------------------------------------------+
 |  Pi0 -> DOBOT (원격 추론 모드)                          |
@@ -671,40 +674,52 @@ class Pi0DobotPipeline:
 |  [G] 그리퍼   [T] 명령 변경   [ESC] 종료                  |
 +-----------------------------------------------------------+
 """)
-        auto_mode = False
-        cycle = 0
+        # 공유 상태
+        self._auto_mode = False
+        self._cycle = 0
+        self._running = True
+        self._inferring = False  # 추론 스레드가 작업 중인지
 
-        try:
-            while cycle < max_cycles:
-                f1, f2 = self.cameras.capture()
-                if f1 is not None and f2 is not None:
-                    self._show_preview(f1, f2, cycle, auto_mode)
+        # 최신 카메라 프레임 (메인 스레드가 갱신, 추론 스레드가 읽음)
+        self._latest_frames = (None, None)
+        self._frame_lock = threading.Lock()
 
-                key = cv2.waitKey(30 if not auto_mode else 1) & 0xFF
+        def inference_worker():
+            """추론 + 로봇 실행 스레드."""
+            while self._running and self._cycle < max_cycles:
+                if not self._auto_mode or self._inferring:
+                    time.sleep(0.05)
+                    continue
 
-                if key == 27:  # ESC
-                    break
+                # 최신 프레임 가져오기
+                with self._frame_lock:
+                    f1, f2 = self._latest_frames
+                if f1 is None or f2 is None:
+                    time.sleep(0.05)
+                    continue
 
-                elif (key == ord(' ') or auto_mode) and f1 is not None and f2 is not None:
+                self._inferring = True
+                try:
                     state = self.dobot.get_state()
-
-                    # Pi0 서버 추론
                     actions, raw_out, dt_ms = self.pi0.predict(
                         f1, f2, state, self.current_task
                     )
 
                     if actions is None:
+                        time.sleep(0.5)
                         continue
 
-                    if cycle == 0:
+                    if self._cycle == 0:
                         print(f"\n  [DEBUG] state: {state}")
                         print(f"  [DEBUG] raw_out: {raw_out}")
                         print(f"  [DEBUG] delta[0]: {actions[0]}\n")
 
                     for i, delta in enumerate(actions):
+                        if not self._running:
+                            break
                         cur, tgt, alarmed = self.dobot.execute(delta)
                         print(
-                            f"  Cycle {cycle+1} [{i+1}/{len(actions)}] "
+                            f"  Cycle {self._cycle+1} [{i+1}/{len(actions)}] "
                             f"Δ[{delta[0]:+.1f},{delta[1]:+.1f},{delta[2]:+.1f},{delta[3]:+.1f},{delta[4]:.2f}] "
                             f"({cur[0]:.0f},{cur[1]:.0f},{cur[2]:.0f})->({tgt[0]:.0f},{tgt[1]:.0f},{tgt[2]:.0f}) "
                             f"G:{'ON' if self.dobot.grip_on else 'OFF'} "
@@ -713,29 +728,82 @@ class Pi0DobotPipeline:
                         if alarmed:
                             print(f"  >> ALARM 복구됨 — 새로 관측합니다")
                             break
-                    cycle += 1
+                    self._cycle += 1
+                except Exception as e:
+                    print(f"  추론 스레드 에러: {e}")
+                finally:
+                    self._inferring = False
+
+        # 추론 스레드 시작
+        worker = threading.Thread(target=inference_worker, daemon=True)
+        worker.start()
+
+        try:
+            while self._running and self._cycle < max_cycles:
+                # 메인 스레드: 카메라 캡처 + 프리뷰 (30fps 유지)
+                f1, f2 = self.cameras.capture()
+                if f1 is not None and f2 is not None:
+                    with self._frame_lock:
+                        self._latest_frames = (f1.copy(), f2.copy())
+
+                    # 추론 중 표시
+                    status = "INFERRING..." if self._inferring else ""
+                    self._show_preview(f1, f2, self._cycle, self._auto_mode, status)
+
+                key = cv2.waitKey(30) & 0xFF
+
+                if key == 27:  # ESC
+                    self._running = False
+                    break
+
+                elif key == ord(' ') and not self._auto_mode:
+                    # 수동 1회 추론 (메인 스레드에서 직접 실행)
+                    if f1 is not None and f2 is not None and not self._inferring:
+                        self._inferring = True
+                        state = self.dobot.get_state()
+                        actions, raw_out, dt_ms = self.pi0.predict(
+                            f1, f2, state, self.current_task
+                        )
+                        if actions is not None:
+                            for i, delta in enumerate(actions):
+                                cur, tgt, alarmed = self.dobot.execute(delta)
+                                print(
+                                    f"  Cycle {self._cycle+1} [{i+1}/{len(actions)}] "
+                                    f"Δ[{delta[0]:+.1f},{delta[1]:+.1f},{delta[2]:+.1f},{delta[3]:+.1f},{delta[4]:.2f}] "
+                                    f"({cur[0]:.0f},{cur[1]:.0f},{cur[2]:.0f})->({tgt[0]:.0f},{tgt[1]:.0f},{tgt[2]:.0f}) "
+                                    f"G:{'ON' if self.dobot.grip_on else 'OFF'} "
+                                    f"서버:{dt_ms:.0f}ms"
+                                )
+                                if alarmed:
+                                    print(f"  >> ALARM 복구됨 — 새로 관측합니다")
+                                    break
+                            self._cycle += 1
+                        self._inferring = False
 
                 elif key == ord('a'):
-                    auto_mode = not auto_mode
-                    print(f"\n  {'자동' if auto_mode else '수동'} 모드")
+                    self._auto_mode = not self._auto_mode
+                    print(f"\n  {'자동' if self._auto_mode else '수동'} 모드")
 
                 elif key == ord('q'):
-                    self.dobot.go_home()
+                    if not self._inferring:
+                        self.dobot.go_home()
 
                 elif key == ord('r'):
-                    self.dobot.homing()
+                    if not self._inferring:
+                        self.dobot.homing()
 
                 elif key == ord('g'):
-                    self.dobot.grip_on = not self.dobot.grip_on
-                    try:
-                        self.dobot.dobot.grip(self.dobot.grip_on)
-                        time.sleep(0.5)
-                    except:
-                        pass
-                    print(f"  그리퍼: {'ON' if self.dobot.grip_on else 'OFF'}")
+                    if not self._inferring:
+                        self.dobot.grip_on = not self.dobot.grip_on
+                        try:
+                            self.dobot.dobot.grip(self.dobot.grip_on)
+                            time.sleep(0.5)
+                        except:
+                            pass
+                        print(f"  그리퍼: {'ON' if self.dobot.grip_on else 'OFF'}")
 
                 elif key == ord('t'):
-                    auto_mode = False
+                    self._auto_mode = False
                     print("\n  새 명령 입력 (콘솔):")
                     new_task = input("  > ").strip()
                     if new_task:
@@ -743,7 +811,7 @@ class Pi0DobotPipeline:
                         print(f"  Task: {self.current_task}")
 
                 elif key == ord('l'):
-                    auto_mode = False
+                    self._auto_mode = False
                     if self.planner:
                         print("\n  LLM 체이닝 목표 입력:")
                         goal = input("  > ").strip()
@@ -755,9 +823,11 @@ class Pi0DobotPipeline:
         except KeyboardInterrupt:
             print("\n중단")
 
+        self._running = False
+        worker.join(timeout=5)
         self.close()
 
-    def _show_preview(self, f1, f2, cycle, auto_mode):
+    def _show_preview(self, f1, f2, cycle, auto_mode, status=""):
         pose = self.dobot.get_pose()
         mode_str = "AUTO" if auto_mode else "MANUAL"
         color = (0, 0, 255) if auto_mode else (0, 255, 0)
@@ -768,6 +838,8 @@ class Pi0DobotPipeline:
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         cv2.putText(f1, f"Task: {self.current_task[:50]}",
                     (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+        if status:
+            cv2.putText(f1, status, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
 
         cv2.putText(f2, f"WRIST | Grip: {'ON' if self.dobot.grip_on else 'OFF'}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
