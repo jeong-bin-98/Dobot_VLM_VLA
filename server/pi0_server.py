@@ -288,7 +288,43 @@ def model_info():
     return {"error": "not found"}
 
 
+@app.on_event("shutdown")
+def on_shutdown():
+    """서버 종료 시 GPU 메모리 및 리소스 해제."""
+    global policy, normalizer, paligemma_tokenizer
+    logger.info("서버 종료 — GPU 메모리 해제 중...")
+    try:
+        if policy is not None:
+            del policy
+            policy = None
+        if normalizer is not None:
+            del normalizer
+            normalizer = None
+        if paligemma_tokenizer is not None:
+            del paligemma_tokenizer
+            paligemma_tokenizer = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        import gc
+        gc.collect()
+        logger.info("GPU 메모리 해제 완료")
+    except Exception as e:
+        logger.error(f"종료 정리 실패: {e}")
+
+
 if __name__ == "__main__":
+    import signal
+
+    def graceful_exit(signum, frame):
+        """Ctrl+C 등 시그널 시 정리 후 종료."""
+        logger.info(f"시그널 {signum} 수신 — 종료합니다")
+        on_shutdown()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGINT, graceful_exit)
+    signal.signal(signal.SIGTERM, graceful_exit)
+
     print(f"""
 +-----------------------------------------------------------+
 |  Pi0 / Pi0-FAST Inference Server                         |
@@ -298,4 +334,7 @@ if __name__ == "__main__":
 |  GET  /model_info Model config                           |
 +-----------------------------------------------------------+
 """)
-    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
+    try:
+        uvicorn.run(app, host=HOST, port=PORT, log_level="info")
+    finally:
+        on_shutdown()
