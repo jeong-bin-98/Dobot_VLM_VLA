@@ -228,7 +228,7 @@ class DobotControl:
         return cur, [tx, ty, tz, tr], False
 
     def _clear_alarm(self):
-        """ALARM 발생 시 명시적 알람 해제 + 시리얼 재연결."""
+        """ALARM 발생 시 명시적 알람 해제 + 큐 재시작 + 시리얼 재연결."""
         import gc
         from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
 
@@ -237,14 +237,6 @@ class DobotControl:
             ser = getattr(self.dobot, 'ser', None)
             if ser:
                 port = ser.port
-                try:
-                    msg = Message()
-                    msg.id = IDs.CLEAR_ALL_ALARMS_STATE
-                    msg.ctrl = CV.ONE
-                    msg.params = bytearray([])
-                    self.dobot._send_command(msg)
-                except Exception:
-                    pass
                 if ser.is_open:
                     ser.close()
         except Exception:
@@ -263,15 +255,17 @@ class DobotControl:
         try:
             self.dobot = pydobot.Dobot(port=port or self._find_port(), verbose=False)
             time.sleep(1)
-            try:
-                msg = Message()
-                msg.id = IDs.CLEAR_ALL_ALARMS_STATE
-                msg.ctrl = CV.ONE
-                msg.params = bytearray([])
-                self.dobot._send_command(msg)
-            except Exception:
-                pass
+
+            # ClearAllAlarms → 큐 클리어 → 큐 재시작
+            msg = Message()
+            msg.id = IDs.CLEAR_ALL_ALARMS_STATE
+            msg.ctrl = CV.ONE
+            self.dobot._send_command(msg)
+
+            self.dobot._set_queued_cmd_clear()
+            self.dobot._set_queued_cmd_start_exec()
             time.sleep(0.5)
+
             self.dobot.speed(100, 100)
             self.grip_on = False
             try:

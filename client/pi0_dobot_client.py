@@ -422,7 +422,7 @@ class DobotController:
         return cur, [tx, ty, tz, tr], False
 
     def clear_alarm(self):
-        """ALARM 발생 시 명시적 알람 해제 + 시리얼 재연결."""
+        """ALARM 발생 시 명시적 알람 해제 + 큐 재시작 + 시리얼 재연결."""
         import gc
         from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
 
@@ -431,22 +431,11 @@ class DobotController:
             ser = getattr(self.dobot, 'ser', None)
             if ser:
                 port = ser.port
-                # 1단계: 먼저 CLEAR_ALL_ALARMS_STATE 명령 전송 시도
-                try:
-                    msg = Message()
-                    msg.id = IDs.CLEAR_ALL_ALARMS_STATE
-                    msg.ctrl = CV.ONE
-                    msg.params = bytearray([])
-                    self.dobot._send_command(msg)
-                    print(f"    >> ClearAllAlarms 명령 전송")
-                except Exception:
-                    pass
                 if ser.is_open:
                     ser.close()
         except Exception:
             pass
 
-        # 2단계: 기존 객체 완전 제거
         try:
             del self.dobot
         except Exception:
@@ -457,26 +446,25 @@ class DobotController:
         print(f"    >> 알람 해제 중... (3초 대기)")
         time.sleep(3)
 
-        # 3단계: 재연결 + 다시 알람 클리어
         try:
+            # 재연결 (생성자가 _set_queued_cmd_start_exec + _set_queued_cmd_clear 호출)
             self.dobot = pydobot.Dobot(port=port or self._find_port(), verbose=False)
             time.sleep(1)
 
-            # 재연결 후에도 한번 더 ClearAllAlarms
-            try:
-                msg = Message()
-                msg.id = IDs.CLEAR_ALL_ALARMS_STATE
-                msg.ctrl = CV.ONE
-                msg.params = bytearray([])
-                self.dobot._send_command(msg)
-            except Exception:
-                pass
+            # ClearAllAlarms → 큐 클리어 → 큐 재시작 (이 순서가 중요)
+            msg = Message()
+            msg.id = IDs.CLEAR_ALL_ALARMS_STATE
+            msg.ctrl = CV.ONE
+            self.dobot._send_command(msg)
+
+            self.dobot._set_queued_cmd_clear()
+            self.dobot._set_queued_cmd_start_exec()
             time.sleep(0.5)
 
             self.dobot.speed(100, 100)
             self.grip_on = False
 
-            # Home 이동 시도 (실패해도 OK — 현재 위치에서 계속)
+            # Home 이동 시도 (실패해도 OK)
             try:
                 self.dobot.move_to(200, 0, 50, 0, wait=True)
             except Exception:
