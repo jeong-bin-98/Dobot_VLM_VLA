@@ -85,6 +85,7 @@ class LeRobotV3Collector:
         self.episode_index = 0
         self.frame_index = 0
         self.global_frame_index = 0
+        self._autosave_frame_count = 0  # autosave 증분 저장용
 
         # Current episode buffers
         self.episode_images_cam1: List[np.ndarray] = []
@@ -448,13 +449,16 @@ class LeRobotV3Collector:
         tmp.mkdir(parents=True, exist_ok=True)
         ep_str = f"{self.episode_index:06d}"
 
-        # 이미지 저장
-        for i, (img1, img2) in enumerate(zip(self.episode_images_cam1, self.episode_images_cam2)):
+        # 이미지 증분 저장 (이미 저장된 프레임 이후만)
+        for i in range(self._autosave_frame_count, len(self.episode_images_cam1)):
+            img1 = self.episode_images_cam1[i]
+            img2 = self.episode_images_cam2[i]
             for cam_name, img in [(self.cam1_name, img1), (self.cam2_name, img2)]:
                 img_dir = tmp / "images" / cam_name / f"episode_{ep_str}"
                 img_dir.mkdir(parents=True, exist_ok=True)
                 cv2.imwrite(str(img_dir / f"frame_{i:06d}.jpg"), img,
                             [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        self._autosave_frame_count = len(self.episode_images_cam1)
 
         # 데이터 저장
         meta = {
@@ -470,6 +474,7 @@ class LeRobotV3Collector:
 
     def _clear_autosave(self):
         """에피소드 저장/폐기 후 임시 파일 삭제."""
+        self._autosave_frame_count = 0
         tmp = self._autosave_dir()
         if tmp.exists():
             shutil.rmtree(tmp)
@@ -544,6 +549,22 @@ class LeRobotV3Collector:
                     buf.append(np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8))
                     img_fail += 1
         print(f"  - 이미지 복구: {img_ok}장 성공, {img_fail}장 누락")
+
+        if img_fail > 0:
+            print(f"\n  !! 경고: {img_fail}장의 이미지가 누락되어 검은 프레임으로 대체됩니다.")
+            print(f"     검은 프레임이 포함된 에피소드는 학습 품질을 저하시킬 수 있습니다.")
+            while True:
+                choice = input("     [Y] 그대로 진행 / [N] 이 에피소드 폐기: ").strip().upper()
+                if choice == "N":
+                    print("  에피소드 폐기됨.")
+                    self.episode_images_cam1.clear()
+                    self.episode_images_cam2.clear()
+                    self.episode_data.clear()
+                    self.step_started = False
+                    self._clear_autosave()
+                    return
+                elif choice == "Y":
+                    break
 
         # stats 버퍼에도 복구
         for row in self.episode_data:
@@ -677,8 +698,8 @@ class LeRobotV3Collector:
                 ep_dir.mkdir(parents=True, exist_ok=True)
                 frame_path = ep_dir / f"frame_{i:06d}.jpg"
                 cv2.imwrite(str(frame_path), img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-                # Store ABSOLUTE path (lerobot v0.5.1 호환)
-                self.episode_data[i][cam_name] = {"path": str(frame_path)}
+                # Store RELATIVE path (lerobot v3.0 호환)
+                self.episode_data[i][cam_name] = {"path": f"images/{cam_name}/chunk-000/episode_{ep_str}/frame_{i:06d}.jpg"}
 
         # --- Save episode parquet ---
         df = pd.DataFrame(self.episode_data)

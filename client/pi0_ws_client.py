@@ -17,6 +17,7 @@ import time
 import json
 import base64
 import argparse
+import math
 import threading
 from typing import Optional, List
 
@@ -38,6 +39,10 @@ BOUNDS = {
     "z": (-30, 150),
     "r": (-90, 90),
 }
+# Dobot Magician singularity 방지 — 수평 도달거리 제한
+REACH_MIN = 135    # mm — 팔 접힘 한계 (singularity)
+REACH_MAX = 300    # mm — 팔 신장 한계 (singularity)
+ALARM_POS_THRESHOLD = 5.0  # mm — move_to 후 오차가 이보다 크면 ALARM 판정
 
 # Gripper timing -- adjust on-site
 GRIPPER_DELAY_S = 0.1
@@ -102,7 +107,7 @@ class DobotControl:
         return self.get_pose() + [1.0 if self.grip_on else 0.0]
 
     def execute(self, delta) -> tuple:
-        """Apply delta action. Returns (current_pos, target_pos)."""
+        """Apply delta action with singularity prevention. Returns (current_pos, target_pos)."""
         cur = self.get_pose()
 
         tx = float(np.clip(cur[0] + delta[0], *BOUNDS["x"]))
@@ -110,10 +115,30 @@ class DobotControl:
         tz = float(np.clip(cur[2] + delta[2], *BOUNDS["z"]))
         tr = float(np.clip(cur[3] + delta[3], *BOUNDS["r"]))
 
-        # Move first
+        # 1단계: singularity 사전 검증 — 수평 도달거리 체크
+        dist = math.sqrt(tx ** 2 + ty ** 2)
+        if dist > REACH_MAX or dist < REACH_MIN:
+            safe_dist = float(np.clip(dist, REACH_MIN + 10, REACH_MAX - 10))
+            scale = safe_dist / dist if dist > 0 else 1.0
+            tx = float(cur[0] + (tx - cur[0]) * scale)
+            ty = float(cur[1] + (ty - cur[1]) * scale)
+            print(f"    >> Singularity 회피: dist={dist:.0f}->{safe_dist:.0f}mm")
+
+        # 2단계: 이동
         self.dobot.move_to(tx, ty, tz, tr, wait=True)
 
-        # Gripper after move (TODO: on-site debug)
+        # 3단계: ALARM 감지 — 실제 도착 위치와 목표 비교
+        try:
+            actual = self.dobot.pose()
+            error = math.sqrt((actual[0] - tx) ** 2 + (actual[1] - ty) ** 2 + (actual[2] - tz) ** 2)
+            if error > ALARM_POS_THRESHOLD:
+                print(f"    >> ALARM 감지 (오차 {error:.1f}mm), 복구 중...")
+                self._clear_alarm()
+                return cur, [200, 0, 50, 0]
+        except Exception:
+            pass
+
+        # 4단계: Gripper after move
         new_grip = delta[4] > GRIPPER_THRESHOLD
         if new_grip != self.grip_on:
             self.grip_on = new_grip
@@ -130,6 +155,32 @@ class DobotControl:
             print(f"    Grip: {'ON' if self.grip_on else 'OFF'}")
 
         return cur, [tx, ty, tz, tr]
+
+    def _clear_alarm(self):
+        """ALARM 발생 시 시리얼 재연결로 복구 후 안전 위치로 이동."""
+        port = None
+        try:
+            ser = getattr(self.dobot, 'ser', None)
+            if ser:
+                port = ser.port
+                if ser.is_open:
+                    ser.close()
+        except Exception:
+            pass
+
+        time.sleep(3)
+
+        try:
+            if port:
+                self.dobot = pydobot.Dobot(port=port, verbose=False)
+            else:
+                self.dobot = pydobot.Dobot(port=self._find_port(), verbose=False)
+            self.dobot.speed(150, 150)
+            self.grip_on = False
+            self.dobot.move_to(200, 0, 50, 0, wait=True)
+            print(f"    >> ALARM 복구 완료, 안전 위치로 이동")
+        except Exception as e:
+            print(f"    >> ALARM 복구 실패: {e}")
 
     def home(self):
         self.grip_on = False

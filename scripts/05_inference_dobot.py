@@ -13,6 +13,7 @@ Pi0-FAST 추론 — Dobot Magician 실시간 구동
 import os
 import sys
 import time
+import math
 import argparse
 from pathlib import Path
 from typing import Optional
@@ -38,6 +39,10 @@ BOUNDS = {
     "z": (-30, 150),
     "r": (-90, 90),
 }
+# Dobot Magician singularity 방지 — 수평 도달거리 제한
+REACH_MIN = 135    # mm — 팔 접힘 한계 (singularity)
+REACH_MAX = 300    # mm — 팔 신장 한계 (singularity)
+ALARM_POS_THRESHOLD = 5.0  # mm — move_to 후 오차가 이보다 크면 ALARM 판정
 
 
 class ModelNormalizer:
@@ -49,29 +54,29 @@ class ModelNormalizer:
 
         # Input: state 정규화 (mean/std)
         pre_files = sorted(glob.glob(os.path.join(model_path, "policy_preprocessor_step_*_normalizer_processor.safetensors")))
-        if pre_files:
-            data = load_file(pre_files[0])
-            self.state_mean = data["observation.state.mean"].numpy()
-            self.state_std = data["observation.state.std"].numpy()
-            self.state_std = np.where(self.state_std < 1e-6, 1.0, self.state_std)
-            print(f"  Preprocessor loaded: state mean={self.state_mean}, std={self.state_std}")
-        else:
-            print("  WARNING: preprocessor not found — state will not be normalized")
-            self.state_mean = np.zeros(5)
-            self.state_std = np.ones(5)
+        if not pre_files:
+            raise FileNotFoundError(
+                f"Preprocessor not found in {model_path}. "
+                f"Expected: policy_preprocessor_step_*_normalizer_processor.safetensors"
+            )
+        data = load_file(pre_files[0])
+        self.state_mean = data["observation.state.mean"].numpy()
+        self.state_std = data["observation.state.std"].numpy()
+        self.state_std = np.where(self.state_std < 1e-6, 1.0, self.state_std)
+        print(f"  Preprocessor loaded: state mean={self.state_mean}, std={self.state_std}")
 
         # Output: action 역정규화 (mean/std)
         post_files = sorted(glob.glob(os.path.join(model_path, "policy_postprocessor_step_*_unnormalizer_processor.safetensors")))
-        if post_files:
-            data = load_file(post_files[0])
-            self.action_mean = data["action.mean"].numpy()
-            self.action_std = data["action.std"].numpy()
-            self.action_std = np.where(self.action_std < 1e-6, 1.0, self.action_std)
-            print(f"  Postprocessor loaded: action mean={self.action_mean}, std={self.action_std}")
-        else:
-            print("  WARNING: postprocessor not found — actions will not be denormalized")
-            self.action_mean = np.zeros(5)
-            self.action_std = np.ones(5)
+        if not post_files:
+            raise FileNotFoundError(
+                f"Postprocessor not found in {model_path}. "
+                f"Expected: policy_postprocessor_step_*_unnormalizer_processor.safetensors"
+            )
+        data = load_file(post_files[0])
+        self.action_mean = data["action.mean"].numpy()
+        self.action_std = data["action.std"].numpy()
+        self.action_std = np.where(self.action_std < 1e-6, 1.0, self.action_std)
+        print(f"  Postprocessor loaded: action mean={self.action_mean}, std={self.action_std}")
 
     def normalize_state(self, raw: np.ndarray) -> np.ndarray:
         return (np.array(raw, dtype=np.float32) - self.state_mean) / self.state_std
@@ -127,16 +132,42 @@ def get_state(bot: pydobot.Dobot) -> torch.Tensor:
     return torch.tensor([state], dtype=torch.float32)
 
 
-def execute_action(bot: pydobot.Dobot, action: list):
-    """예측된 delta action을 Dobot에 실행 (안전 경계 적용)."""
+def execute_action(bot: pydobot.Dobot, action: list) -> pydobot.Dobot:
+    """예측된 delta action을 Dobot에 실행 (안전 경계 + singularity 방지).
+
+    ALARM 복구 시 bot이 재생성되므로, 반환된 bot을 사용해야 합니다.
+    """
     pose = bot.pose()
-    new_x = float(np.clip(pose[0] + action[0], *BOUNDS["x"]))
-    new_y = float(np.clip(pose[1] + action[1], *BOUNDS["y"]))
-    new_z = float(np.clip(pose[2] + action[2], *BOUNDS["z"]))
-    new_r = float(np.clip(pose[3] + action[3], *BOUNDS["r"]))
+    cur = [pose[0], pose[1], pose[2], pose[3]]
+    new_x = float(np.clip(cur[0] + action[0], *BOUNDS["x"]))
+    new_y = float(np.clip(cur[1] + action[1], *BOUNDS["y"]))
+    new_z = float(np.clip(cur[2] + action[2], *BOUNDS["z"]))
+    new_r = float(np.clip(cur[3] + action[3], *BOUNDS["r"]))
     grip = action[4] > 0.5
 
+    # 1단계: singularity 사전 검증 — 수평 도달거리 체크
+    dist = math.sqrt(new_x ** 2 + new_y ** 2)
+    if dist > REACH_MAX or dist < REACH_MIN:
+        safe_dist = float(np.clip(dist, REACH_MIN + 10, REACH_MAX - 10))
+        scale = safe_dist / dist if dist > 0 else 1.0
+        new_x = float(cur[0] + (new_x - cur[0]) * scale)
+        new_y = float(cur[1] + (new_y - cur[1]) * scale)
+        print(f"  >> Singularity 회피: dist={dist:.0f}->{safe_dist:.0f}mm")
+
+    # 2단계: 이동
     bot.move_to(new_x, new_y, new_z, new_r, wait=True)
+
+    # 3단계: ALARM 감지
+    try:
+        actual = bot.pose()
+        error = math.sqrt((actual[0] - new_x) ** 2 + (actual[1] - new_y) ** 2 + (actual[2] - new_z) ** 2)
+        if error > ALARM_POS_THRESHOLD:
+            print(f"  >> ALARM 감지 (오차 {error:.1f}mm), 복구 중...")
+            bot = _clear_alarm(bot)
+            return bot
+    except Exception:
+        pass
+
     try:
         bot.suck(grip)
     except Exception:
@@ -144,6 +175,33 @@ def execute_action(bot: pydobot.Dobot, action: list):
             bot.grip(grip)
         except Exception:
             pass
+
+    return bot
+
+
+def _clear_alarm(bot: pydobot.Dobot) -> pydobot.Dobot:
+    """ALARM 발생 시 시리얼 재연결로 복구 후 안전 위치로 이동."""
+    port = None
+    try:
+        ser = getattr(bot, 'ser', None)
+        if ser:
+            port = ser.port
+            if ser.is_open:
+                ser.close()
+    except Exception:
+        pass
+
+    time.sleep(3)
+
+    try:
+        new_bot = pydobot.Dobot(port=port, verbose=False) if port else bot
+        new_bot.speed(150, 150)
+        new_bot.move_to(200, 0, 50, 0, wait=True)
+        print(f"  >> ALARM 복구 완료, 안전 위치로 이동")
+        return new_bot
+    except Exception as e:
+        print(f"  >> ALARM 복구 실패: {e}")
+        return bot
 
 
 def main():
@@ -258,8 +316,8 @@ def main():
         print(f"  Step {step + 1}: delta=({action_list[0]:+.1f}, {action_list[1]:+.1f}, "
               f"{action_list[2]:+.1f}) grip={'ON' if action_list[4] > 0.5 else 'OFF'}")
 
-        # Dobot 실행
-        execute_action(bot, action_list)
+        # Dobot 실행 (ALARM 복구 시 bot이 재생성될 수 있음)
+        bot = execute_action(bot, action_list)
         step += 1
         time.sleep(0.1)
 

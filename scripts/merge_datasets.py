@@ -92,13 +92,11 @@ def merge_datasets(dataset_dirs: list[str], output_dir: str):
             df["index"] = range(global_frame_idx, global_frame_idx + n_frames)
             df["frame_index"] = range(n_frames)
 
-            # 이미지 경로를 출력 데이터셋의 절대경로로 변환
+            # 이미지 경로를 상대경로로 변환 (lerobot v3.0 호환)
             ep_str = f"{global_ep_idx:06d}"
             for cam in cam_names:
                 if cam in df.columns:
-                    df[cam] = df[cam].apply(lambda x: {
-                        "path": str(output / "images" / cam / "chunk-000" / f"episode_{ep_str}" / f"frame_{int(x['path'].split('frame_')[1].split('.')[0]):06d}.jpg")
-                    } if isinstance(x, dict) else x)
+                    df[cam] = [{"path": f"images/{cam}/chunk-000/episode_{ep_str}/frame_{i:06d}.jpg"} for i in range(n_frames)]
 
             # 데이터 저장
             pq.write_table(

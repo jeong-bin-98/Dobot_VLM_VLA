@@ -16,6 +16,13 @@ STEPS="${3:-100}"
 OUTPUT="${4:-outputs/pi0fast_dobot_test}"
 RESUME="${5:-}"
 
+# Warmup: STEPS의 5%, 최소 10, 최대 500
+WARMUP=$(( STEPS / 20 ))
+[ "$WARMUP" -lt 10 ] && WARMUP=10
+[ "$WARMUP" -gt 500 ] && WARMUP=500
+# Decay: warmup 이후 구간
+DECAY=$(( STEPS - WARMUP ))
+
 # resume 옵션 설정
 RESUME_FLAG=""
 if [ "$RESUME" = "resume" ] || [ "$RESUME" = "true" ] || [ "$RESUME" = "1" ]; then
@@ -49,8 +56,8 @@ if [ ${#DS_ARRAY[@]} -eq 1 ]; then
         --scheduler.type=cosine_decay_with_warmup \
         --scheduler.peak_lr=2.5e-5 \
         --scheduler.decay_lr=2.5e-6 \
-        --scheduler.num_warmup_steps=500 \
-        --scheduler.num_decay_steps="$STEPS" \
+        --scheduler.num_warmup_steps="$WARMUP" \
+        --scheduler.num_decay_steps="$DECAY" \
         --save_freq=5000 \
         --output_dir="$OUTPUT" \
         $RESUME_FLAG
@@ -58,6 +65,7 @@ else
     # 여러 데이터셋 합쳐서 학습 (merge 후 학습)
     MERGED_DIR="./merged_dataset_tmp"
     MERGED_REPO="local/merged_dataset"
+    trap 'echo ">>> 임시 데이터셋 정리: $MERGED_DIR"; rm -rf "$MERGED_DIR"' EXIT
 
     echo "=== 멀티 데이터셋 학습 ==="
     echo "  데이터셋: ${DS_ARRAY[*]}"
@@ -92,8 +100,8 @@ else
         --scheduler.type=cosine_decay_with_warmup \
         --scheduler.peak_lr=2.5e-5 \
         --scheduler.decay_lr=2.5e-6 \
-        --scheduler.num_warmup_steps=500 \
-        --scheduler.num_decay_steps="$STEPS" \
+        --scheduler.num_warmup_steps="$WARMUP" \
+        --scheduler.num_decay_steps="$DECAY" \
         --save_freq=5000 \
         --output_dir="$OUTPUT" \
         $RESUME_FLAG

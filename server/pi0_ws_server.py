@@ -47,31 +47,33 @@ class ModelNormalizer:
 
         # Input normalization — glob으로 자동 검색
         pre_files = sorted(glob.glob(os.path.join(model_path, "policy_preprocessor_step_*_normalizer_processor.safetensors")))
-        if pre_files:
-            data = load_file(pre_files[0])
-            self.state_mean = data["observation.state.mean"].numpy()
-            self.state_std = np.where(data["observation.state.std"].numpy() < 1e-6, 1.0,
-                                      data["observation.state.std"].numpy())
-            logger.info(f"   preprocessor: {os.path.basename(pre_files[0])}")
-            logger.info(f"   state mean: {self.state_mean}")
-            logger.info(f"   state std:  {self.state_std}")
-        else:
-            logger.warning("   preprocessor 없음 — state 정규화 비활성")
-            self.state_mean, self.state_std = np.zeros(5), np.ones(5)
+        if not pre_files:
+            raise FileNotFoundError(
+                f"Preprocessor not found in {model_path}. "
+                f"Expected: policy_preprocessor_step_*_normalizer_processor.safetensors"
+            )
+        data = load_file(pre_files[0])
+        self.state_mean = data["observation.state.mean"].numpy()
+        self.state_std = np.where(data["observation.state.std"].numpy() < 1e-6, 1.0,
+                                  data["observation.state.std"].numpy())
+        logger.info(f"   preprocessor: {os.path.basename(pre_files[0])}")
+        logger.info(f"   state mean: {self.state_mean}")
+        logger.info(f"   state std:  {self.state_std}")
 
         # Output un-normalization — glob으로 자동 검색
         post_files = sorted(glob.glob(os.path.join(model_path, "policy_postprocessor_step_*_unnormalizer_processor.safetensors")))
-        if post_files:
-            data = load_file(post_files[0])
-            self.action_mean = data["action.mean"].numpy()
-            self.action_std = np.where(data["action.std"].numpy() < 1e-6, 1.0,
-                                       data["action.std"].numpy())
-            logger.info(f"   postprocessor: {os.path.basename(post_files[0])}")
-            logger.info(f"   action mean: {self.action_mean}")
-            logger.info(f"   action std:  {self.action_std}")
-        else:
-            logger.warning("   postprocessor 없음 — action 역정규화 비활성")
-            self.action_mean, self.action_std = np.zeros(5), np.ones(5)
+        if not post_files:
+            raise FileNotFoundError(
+                f"Postprocessor not found in {model_path}. "
+                f"Expected: policy_postprocessor_step_*_unnormalizer_processor.safetensors"
+            )
+        data = load_file(post_files[0])
+        self.action_mean = data["action.mean"].numpy()
+        self.action_std = np.where(data["action.std"].numpy() < 1e-6, 1.0,
+                                   data["action.std"].numpy())
+        logger.info(f"   postprocessor: {os.path.basename(post_files[0])}")
+        logger.info(f"   action mean: {self.action_mean}")
+        logger.info(f"   action std:  {self.action_std}")
 
     def normalize_state(self, raw):
         return (np.array(raw, dtype=np.float32) - self.state_mean) / self.state_std
