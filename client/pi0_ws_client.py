@@ -112,9 +112,9 @@ class CameraCapture:
             # 학습/추론 일관성을 위한 고정 설정 (오토 비활성화)
             cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)         # 오토포커스 OFF
             cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)     # 수동 노출 (1=manual, 3=auto)
-            cap.set(cv2.CAP_PROP_EXPOSURE, -6)         # 노출값 (환경에 맞게 조정: -1~-13)
+            cap.set(cv2.CAP_PROP_EXPOSURE, -4)         # 노출값 (환경에 맞게 조정: -1~-13)
             cap.set(cv2.CAP_PROP_AUTO_WB, 0)           # 오토 화이트밸런스 OFF
-            cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 4500) # 색온도 고정 (4000~6500)
+            cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 5000) # 색온도 고정 (4000~6500)
             cap.set(cv2.CAP_PROP_GAIN, 0)              # 게인 최소 (노이즈 방지)
             cap.set(cv2.CAP_PROP_FPS, 30)              # FPS 고정
 

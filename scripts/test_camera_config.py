@@ -18,9 +18,9 @@ IMG_W, IMG_H = 640, 480
 MANUAL_CONFIG = {
     "autofocus": 0,
     "auto_exposure": 1,      # 1=manual, 3=auto
-    "exposure": -6,           # -1 ~ -13 (환경에 맞게)
+    "exposure": -4,           # -1 ~ -13 (환경에 맞게)
     "auto_wb": 0,
-    "wb_temperature": 4500,   # 4000 ~ 6500
+    "wb_temperature": 5000,   # 4000 ~ 6500
     "gain": 0,
     "fps": 30,
 }
