@@ -327,7 +327,8 @@ class DobotController:
 
         self.dobot = pydobot.Dobot(port=port, verbose=False)
         self.dobot.speed(150, 150)
-        print(f"DOBOT: {port}")
+        self._z_pivot = self._calibrate_z_pivot()
+        print(f"DOBOT: {port} (Z_pivot={self._z_pivot:.1f}mm)")
 
     def _find_port(self):
         for p in list_ports.comports():
@@ -339,6 +340,30 @@ class DobotController:
                 return p.device
         ports = list_ports.comports()
         return ports[0].device if ports else "/dev/tty.usbserial-0001"
+
+    def _calibrate_z_pivot(self):
+        """현재 위치에서 Z_pivot 자동 캘리브레이션.
+
+        DH 모델: z = Z_pivot + 135*cos(j2)
+        → Z_pivot = z - 135*cos(j2)
+        """
+        try:
+            r = self.dobot.pose()
+            z, j2 = r[2], r[5]
+            z_pivot = z - DOBOT_A2 * math.cos(math.radians(j2))
+            return z_pivot
+        except Exception:
+            return -85.0  # fallback 추정값
+
+    def is_reachable(self, x, y, z):
+        """(x,y,z)가 Dobot workspace 안에 있는지 DH 기하학으로 판단.
+
+        rear arm의 pivot 점 (r=DOBOT_OFFSET, z=Z_pivot)에서
+        end effector까지 거리가 135mm(rear arm 길이) 이내여야 도달 가능.
+        """
+        r = math.sqrt(x ** 2 + y ** 2)
+        d = math.sqrt((r - DOBOT_OFFSET) ** 2 + (z - self._z_pivot) ** 2)
+        return d < DOBOT_A2 * 0.95  # 5% 안전 마진
 
     def get_pose(self):
         with self._lock:
@@ -368,6 +393,18 @@ class DobotController:
         ty = float(np.clip(cur[1] + delta[1], *BOUNDS["y"]))
         tz = float(np.clip(cur[2] + delta[2], *BOUNDS["z"]))
         tr = float(np.clip(cur[3] + delta[3], *BOUNDS["r"]))
+
+        # 0단계: workspace 도달 가능성 체크 (DH 기하학)
+        if not self.is_reachable(tx, ty, tz):
+            # z를 도달 가능한 범위로 클램프
+            r = math.sqrt(tx ** 2 + ty ** 2)
+            max_z_offset = math.sqrt(max(0, (DOBOT_A2 * 0.90) ** 2 - (r - DOBOT_OFFSET) ** 2))
+            z_max = self._z_pivot + max_z_offset
+            z_min = self._z_pivot - max_z_offset
+            old_tz = tz
+            tz = float(np.clip(tz, z_min, z_max))
+            print(f"    >> Workspace 제한: z={old_tz:.0f}→{tz:.0f}mm "
+                  f"[허용: {z_min:.0f}~{z_max:.0f}mm]")
 
         # 1단계: DH 기반 j2 예측으로 singularity 감지
         target_j2 = _predict_j2(tx, ty)

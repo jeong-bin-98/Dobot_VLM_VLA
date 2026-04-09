@@ -215,3 +215,53 @@ class TestIntegrationScenarios:
         assert 200 < DOBOT_OFFSET < 210
         assert 5 < J2_SAFE_MIN < 20
         assert BOUNDS["x"][0] >= 200  # r=206 이하 차단
+
+
+# ──────────────────────────────────────────
+# Workspace 도달 가능성 테스트 (DH 기하학)
+# ──────────────────────────────────────────
+
+class TestWorkspaceReachability:
+    """(r - 206)² + (z - Z_pivot)² ≤ 135² 검증.
+
+    Z_pivot은 실제 로봇에서 캘리브레이션하지만,
+    수학적 관계는 독립적으로 테스트 가능.
+    """
+
+    def test_circle_equation(self):
+        """pivot에서 arm 길이 안에 있으면 도달 가능."""
+        z_pivot = -85.0  # 추정값
+        # 새 Home (240, 0, 80): r=240, j2≈14.5°
+        r = 240.0
+        z = z_pivot + DOBOT_A2 * math.cos(math.radians(14.5))  # ≈ -85 + 130.6 = 45.6
+        d = math.sqrt((r - DOBOT_OFFSET) ** 2 + (z - z_pivot) ** 2)
+        assert d <= DOBOT_A2 + 0.1  # 도달 가능 (부동소수점 마진)
+
+    def test_far_high_unreachable(self):
+        """먼 거리 + 높은 z는 도달 불가."""
+        z_pivot = -85.0
+        r = 300.0  # far
+        z = 150.0  # high
+        d = math.sqrt((r - DOBOT_OFFSET) ** 2 + (z - z_pivot) ** 2)
+        # d = sqrt(94² + 235²) = sqrt(8836 + 55225) = sqrt(64061) = 253mm > 135mm
+        assert d > DOBOT_A2  # 도달 불가
+
+    def test_z_clamp_formula(self):
+        """주어진 r에서 최대 z 편차 = sqrt(135² - (r-206)²)."""
+        r = 240.0
+        max_z_offset = math.sqrt(DOBOT_A2 ** 2 - (r - DOBOT_OFFSET) ** 2)
+        # sqrt(135² - 34²) = sqrt(18225 - 1156) = sqrt(17069) ≈ 130.6mm
+        assert 125 < max_z_offset < 136
+
+    def test_z_clamp_at_max_r(self):
+        """r=300mm에서 z 편차 최대 = sqrt(135² - 94²) ≈ 96.8mm."""
+        r = 300.0
+        max_z_offset = math.sqrt(DOBOT_A2 ** 2 - (r - DOBOT_OFFSET) ** 2)
+        assert 90 < max_z_offset < 100
+
+    def test_z_clamp_at_safe_min_r(self):
+        """r=REACH_SAFE_MIN(≈229mm)에서 z 편차 = sqrt(135² - 23²) ≈ 133mm."""
+        r = REACH_SAFE_MIN
+        dr = r - DOBOT_OFFSET
+        max_z_offset = math.sqrt(DOBOT_A2 ** 2 - dr ** 2)
+        assert max_z_offset > 130  # 거의 전체 범위 사용 가능
