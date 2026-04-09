@@ -31,44 +31,52 @@ except ImportError as e:
     print(f"필요 패키지: {e}")
     print("pip install opencv-python requests pydobot pyserial")
     sys.exit(1)
-# Safety bounds
+# Safety bounds (DH 파라미터 기반 — r=206mm 이하 차단)
 BOUNDS = {
-    "x": (150, 310),
-    "y": (-150, 150),
+    "x": (200, 300),
+    "y": (-120, 120),
     "z": (-30, 150),
     "r": (-90, 90),
 }
-# Dobot Magician 기구학 상수
-DOBOT_L1 = 135.0   # mm — rear arm 길이
-DOBOT_L2 = 147.0   # mm — forearm 길이
-SINGULARITY_THRESHOLD = 0.92  # |cos(θ2)| > 이 값이면 singularity 위험
+HOME_POS = (240, 0, 80, 0)  # j2≈14.5° 안전 (기존 200,0,50은 j2=-2.5° 위험)
+
+# Dobot Magician DH 파라미터 기반 기구학 상수
+# r = DOBOT_A2 * sin(j2) + DOBOT_OFFSET
+DOBOT_A2 = 135.0      # mm — rear arm 길이
+DOBOT_OFFSET = 206.0   # mm — forearm(147) + wrist_mech(59), 항상 수평
+J2_SAFE_MIN = 10.0     # degrees — j2 > 이 값이어야 안전
+REACH_SAFE_MIN = DOBOT_OFFSET + DOBOT_A2 * math.sin(math.radians(J2_SAFE_MIN))  # ≈229mm
 ALARM_POS_THRESHOLD = 5.0  # mm — move_to 후 오차가 이보다 크면 ALARM 판정
 
 
-def _cos_j2(x, y):
-    """목표점 (x,y)에서의 cos(θ2) 계산. |값| → 1이면 singularity."""
-    r_sq = x ** 2 + y ** 2
-    denom = 2 * DOBOT_L1 * DOBOT_L2
-    return float(np.clip((r_sq - DOBOT_L1 ** 2 - DOBOT_L2 ** 2) / denom, -1.0, 1.0))
+def _predict_j2(x, y):
+    """목표 (x,y)에서의 j2 예측 (degrees). DH 파라미터 기반.
+
+    r = 135*sin(j2) + 206  →  j2 = arcsin((r - 206) / 135)
+    j2 < 10° 이면 singularity 위험.
+    """
+    r = math.sqrt(x ** 2 + y ** 2)
+    sin_j2 = (r - DOBOT_OFFSET) / DOBOT_A2
+    sin_j2 = float(np.clip(sin_j2, -1.0, 1.0))
+    return math.degrees(math.asin(sin_j2))
 
 
 def _path_crosses_singularity(cx, cy, tx, ty, n_samples=5):
-    """직선 경로 상 n개 지점을 샘플링하여 singularity 관통 여부 판단."""
+    """직선 경로 상 n개 지점을 샘플링하여 j2 < J2_SAFE_MIN 구간 관통 여부."""
     for t in np.linspace(0, 1, n_samples):
         px = cx + t * (tx - cx)
         py = cy + t * (ty - cy)
-        if abs(_cos_j2(px, py)) > SINGULARITY_THRESHOLD:
+        if _predict_j2(px, py) < J2_SAFE_MIN:
             return True
     return False
 
 
 def _compute_via_point(cx, cy, tx, ty):
-    """Singularity 영역을 우회하는 경유점 계산.
+    """j2 위험 영역을 우회하는 경유점 계산.
 
-    전략: 경로의 중점을 safe_radius (θ2=90° 지점)로 밀어서
-    팔이 자연스럽게 구부러진 상태를 유지하며 이동.
+    경로의 중점을 safe_r (j2=J2_SAFE_MIN+10° 지점)로 밀어서 우회.
     """
-    safe_r = math.sqrt(DOBOT_L1 ** 2 + DOBOT_L2 ** 2)  # ~200mm (θ2=90°)
+    safe_r = REACH_SAFE_MIN + 20  # ≈249mm (여유)
 
     mx, my = (cx + tx) / 2, (cy + ty) / 2
     mid_r = math.sqrt(mx ** 2 + my ** 2)
@@ -87,7 +95,7 @@ def _compute_via_point(cx, cy, tx, ty):
     vx = float(np.clip(vx, *BOUNDS["x"]))
     vy = float(np.clip(vy, *BOUNDS["y"]))
 
-    if abs(_cos_j2(vx, vy)) > SINGULARITY_THRESHOLD:
+    if _predict_j2(vx, vy) < J2_SAFE_MIN:
         return None
     return (vx, vy)
 
@@ -344,11 +352,11 @@ class DobotController:
 
     def execute(self, delta):
         """
-        Execute delta action with singularity avoidance.
-        - cos(θ2) 기반 singularity 감지
-        - 경유점(via-point)으로 우회
+        Execute delta action with DH 파라미터 기반 singularity 회피.
+        - _predict_j2()로 목표 j2 예측
+        - 위험 시 경유점(via-point)으로 우회
         - ALARM 감지 및 자동 복구
-        - j2 관절각도 사후 검증
+        - 실제 j2 사후 검증
         """
         with self._lock:
             return self._execute_inner(delta)
@@ -361,52 +369,51 @@ class DobotController:
         tz = float(np.clip(cur[2] + delta[2], *BOUNDS["z"]))
         tr = float(np.clip(cur[3] + delta[3], *BOUNDS["r"]))
 
-        # 1단계: cos(θ2) 기반 singularity 감지
-        target_cos = _cos_j2(tx, ty)
-        target_dangerous = abs(target_cos) > SINGULARITY_THRESHOLD
+        # 1단계: DH 기반 j2 예측으로 singularity 감지
+        target_j2 = _predict_j2(tx, ty)
+        target_dangerous = target_j2 < J2_SAFE_MIN
         path_dangerous = _path_crosses_singularity(cur[0], cur[1], tx, ty)
 
         if target_dangerous or path_dangerous:
             via = _compute_via_point(cur[0], cur[1], tx, ty)
             if via:
                 print(f"    >> Singularity 회피: 경유점 ({via[0]:.0f}, {via[1]:.0f})mm "
-                      f"[cos(θ2): 목표={target_cos:+.2f}]")
+                      f"[j2 예측: 목표={target_j2:+.1f}°]")
                 self.dobot.move_to(via[0], via[1], tz, tr, wait=True)
 
-            # 목표 자체가 위험하면 safe_radius로 스케일다운 (도달 불가)
+            # 목표 자체가 위험하면 safe_r로 스케일업
             if target_dangerous:
-                safe_r = math.sqrt(DOBOT_L1 ** 2 + DOBOT_L2 ** 2)
                 dist = math.sqrt(tx ** 2 + ty ** 2)
                 if dist > 1e-3:
-                    scale = safe_r / dist
+                    scale = REACH_SAFE_MIN / dist
                     tx, ty = float(tx * scale), float(ty * scale)
                     tx = float(np.clip(tx, *BOUNDS["x"]))
                     ty = float(np.clip(ty, *BOUNDS["y"]))
-                print(f"    >> 목표 스케일다운: ({tx:.0f}, {ty:.0f})mm")
+                print(f"    >> 목표 스케일: ({tx:.0f}, {ty:.0f})mm [j2→{_predict_j2(tx, ty):+.1f}°]")
 
         # 2단계: 최종 목표로 이동
         self.dobot.move_to(tx, ty, tz, tr, wait=True)
 
-        # 3단계: ALARM 감지 + j2 관절각도 사후 검증
+        # 3단계: ALARM 감지 + 실제 j2 사후 검증
         try:
             actual = self.dobot.pose()
             error = math.sqrt((actual[0] - tx) ** 2 + (actual[1] - ty) ** 2 + (actual[2] - tz) ** 2)
             if error > ALARM_POS_THRESHOLD:
                 self._alarm_count += 1
                 if self._alarm_count >= self.MAX_CONSECUTIVE_ALARMS:
-                    print(f"    >> ALARM {self._alarm_count}회 연속 — 복구 중단, 현재 위치에서 계속합니다")
+                    print(f"    >> ALARM {self._alarm_count}회 연속 — 복구 중단, 현재 위치에서 계속")
                     self._alarm_count = 0
                     return cur, [actual[0], actual[1], actual[2], actual[3]], True
-                print(f"    >> ALARM 감지 ({self._alarm_count}/{self.MAX_CONSECUTIVE_ALARMS}, 오차 {error:.1f}mm), 복구 중...")
+                print(f"    >> ALARM ({self._alarm_count}/{self.MAX_CONSECUTIVE_ALARMS}, 오차 {error:.1f}mm), 복구 중...")
                 self.clear_alarm()
                 pose = self.get_pose()
-                return cur, pose, True  # alarmed=True, 실제 위치 반환
+                return cur, pose, True
             else:
-                self._alarm_count = 0  # 정상 이동 시 카운터 리셋
-            # j2 관절각도 경고
-            j2 = actual[5]
-            if j2 < 5 or j2 > 80:
-                print(f"    >> j2={j2:.1f}deg — singularity 근접 경고")
+                self._alarm_count = 0
+            # 실제 j2 사후 검증
+            real_j2 = actual[5]
+            if real_j2 < J2_SAFE_MIN:
+                print(f"    >> j2={real_j2:.1f}° 위험 (< {J2_SAFE_MIN}°)")
         except Exception:
             pass
 
@@ -442,7 +449,18 @@ class DobotController:
             ser = getattr(self.dobot, 'ser', None)
             if ser:
                 port = ser.port
+                # DTR/RTS 토글로 마이크로컨트롤러 리셋 시도
                 if ser.is_open:
+                    try:
+                        ser.dtr = False
+                        ser.rts = False
+                        time.sleep(0.5)
+                        ser.dtr = True
+                        ser.rts = True
+                        time.sleep(1.0)
+                        print(f"    >> DTR 토글 완료")
+                    except Exception:
+                        pass
                     ser.close()
         except Exception:
             pass
@@ -484,7 +502,7 @@ class DobotController:
                 self.grip_on = False
 
                 try:
-                    self.dobot.move_to(200, 0, 50, 0, wait=True)
+                    self.dobot.move_to(*HOME_POS, wait=True)
                 except Exception:
                     pass
 
@@ -515,13 +533,13 @@ class DobotController:
         with self._lock:
             try:
                 print("  Home 위치로 이동 중...")
-                self.dobot.move_to(200, 0, 50, 0, wait=True)
+                self.dobot.move_to(*HOME_POS, wait=True)
                 self.grip_on = False
                 try:
                     self.dobot.grip(False)
                 except:
                     pass
-                print("  Home 위치 도착: (200, 0, 50, 0)")
+                print(f"  Home 위치 도착: {HOME_POS}")
             except Exception as e:
                 print(f"  Go Home 실패: {e}")
 
