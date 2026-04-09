@@ -316,13 +316,36 @@ class DobotController:
 
         return cur, [tx, ty, tz, tr]
 
-    def home(self):
-        self.dobot.move_to(200, 0, 50, 0, wait=True)
-        self.grip_on = False
+    def go_home(self):
+        """Home 위치(200,0,50,0)로 이동. 호밍 완료 후 사용."""
         try:
-            self.dobot.grip(False)
-        except:
-            pass
+            print("  Home 위치로 이동 중...")
+            self.dobot.move_to(200, 0, 50, 0, wait=True)
+            self.grip_on = False
+            try:
+                self.dobot.grip(False)
+            except:
+                pass
+            print("  Home 위치 도착: (200, 0, 50, 0)")
+        except Exception as e:
+            print(f"  Go Home 실패: {e}")
+
+    def homing(self):
+        """호밍 (리밋스위치 기반 원점 복귀)."""
+        from pydobot.dobot import Message, CommunicationProtocolIDs as IDs, ControlValues as CV
+        try:
+            print("  호밍 중... (리밋스위치 원점 복귀)")
+            # SET_HOME_CMD (id=31) — queued, 리밋스위치 찍고 원점 설정
+            msg = Message()
+            msg.id = IDs.SET_HOME_CMD
+            msg.ctrl = CV.THREE
+            msg.params = bytearray(4)  # reserved 4 bytes (0)
+            self.dobot._send_command(msg, wait=True)
+            self.grip_on = False
+            pose = self.get_pose()
+            print(f"  호밍 완료: x={pose[0]:.1f} y={pose[1]:.1f} z={pose[2]:.1f} r={pose[3]:.1f}")
+        except Exception as e:
+            print(f"  호밍 실패: {e}")
 
     def close(self):
         if self.dobot:
@@ -480,7 +503,8 @@ class Pi0DobotPipeline:
 |  Server: {self.pi0.server_url:<48}|
 |  Task:   {self.current_task:<48}|
 |  [SPACE] 1회 추론   [A] 자동   [L] LLM 체이닝             |
-|  [H] 홈   [G] 그리퍼   [T] 명령 변경   [ESC] 종료         |
+|  [Q] Home 위치 이동  [R] 호밍 (리밋스위치 원점)           |
+|  [G] 그리퍼   [T] 명령 변경   [ESC] 종료                  |
 +-----------------------------------------------------------+
 """)
         auto_mode = False
@@ -528,9 +552,11 @@ class Pi0DobotPipeline:
                     auto_mode = not auto_mode
                     print(f"\n  {'자동' if auto_mode else '수동'} 모드")
 
-                elif key == ord('h'):
-                    self.dobot.home()
-                    print("  홈")
+                elif key == ord('q'):
+                    self.dobot.go_home()
+
+                elif key == ord('r'):
+                    self.dobot.homing()
 
                 elif key == ord('g'):
                     self.dobot.grip_on = not self.dobot.grip_on
@@ -616,13 +642,17 @@ def main():
                         help="LLM 모델명 (예: Qwen/Qwen2.5-1.5B-Instruct)")
     parser.add_argument("--goal", type=str, default=None,
                         help="LLM 체이닝 고수준 목표")
+    parser.add_argument("--homing", action="store_true",
+                        help="시작 시 리밋스위치 호밍 실행")
 
     args = parser.parse_args()
 
     pipeline = Pi0DobotPipeline(args)
 
     try:
-        pipeline.dobot.home()
+        if args.homing:
+            pipeline.dobot.homing()
+        pipeline.dobot.go_home()
 
         if args.goal and args.llm_mode:
             # LLM 체이닝 모드
