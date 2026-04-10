@@ -32,40 +32,52 @@ except ImportError as e:
 
 IMG_W, IMG_H = 640, 480
 
-# Safety bounds (DobotController와 동일)
+# Safety bounds (DH 파라미터 기반 — r=206mm 이하 차단)
 BOUNDS = {
-    "x": (150, 310),
-    "y": (-150, 150),
+    "x": (200, 300),
+    "y": (-120, 120),
     "z": (-30, 150),
     "r": (-90, 90),
 }
-# Dobot Magician 기구학 상수
-DOBOT_L1 = 135.0   # mm — rear arm 길이
-DOBOT_L2 = 147.0   # mm — forearm 길이
-SINGULARITY_THRESHOLD = 0.92  # |cos(θ2)| > 이 값이면 singularity 위험
+HOME_POS = (240, 0, 80, 0)  # j2≈14.5° 안전 (기존 200,0,50은 j2=-2.5° 위험)
+
+# Dobot Magician DH 파라미터 기반 기구학 상수
+# r = DOBOT_A2 * sin(j2) + DOBOT_OFFSET
+DOBOT_A2 = 135.0      # mm — rear arm 길이
+DOBOT_OFFSET = 206.0   # mm — forearm(147) + wrist_mech(59), 항상 수평
+J2_SAFE_MIN = 10.0     # degrees — j2 > 이 값이어야 안전
+REACH_SAFE_MIN = DOBOT_OFFSET + DOBOT_A2 * math.sin(math.radians(J2_SAFE_MIN))  # ≈229mm
 ALARM_POS_THRESHOLD = 5.0  # mm — move_to 후 오차가 이보다 크면 ALARM 판정
 
 
-def _cos_j2(x, y):
-    """목표점 (x,y)에서의 cos(θ2) 계산. |값| → 1이면 singularity."""
-    r_sq = x ** 2 + y ** 2
-    denom = 2 * DOBOT_L1 * DOBOT_L2
-    return float(np.clip((r_sq - DOBOT_L1 ** 2 - DOBOT_L2 ** 2) / denom, -1.0, 1.0))
+def _predict_j2(x, y):
+    """목표 (x,y)에서의 j2 예측 (degrees). DH 파라미터 기반.
+
+    r = 135*sin(j2) + 206  →  j2 = arcsin((r - 206) / 135)
+    j2 < 10° 이면 singularity 위험.
+    """
+    r = math.sqrt(x ** 2 + y ** 2)
+    sin_j2 = (r - DOBOT_OFFSET) / DOBOT_A2
+    sin_j2 = float(np.clip(sin_j2, -1.0, 1.0))
+    return math.degrees(math.asin(sin_j2))
 
 
 def _path_crosses_singularity(cx, cy, tx, ty, n_samples=5):
-    """직선 경로 상 n개 지점을 샘플링하여 singularity 관통 여부 판단."""
+    """직선 경로 상 n개 지점을 샘플링하여 j2 < J2_SAFE_MIN 구간 관통 여부."""
     for t in np.linspace(0, 1, n_samples):
         px = cx + t * (tx - cx)
         py = cy + t * (ty - cy)
-        if abs(_cos_j2(px, py)) > SINGULARITY_THRESHOLD:
+        if _predict_j2(px, py) < J2_SAFE_MIN:
             return True
     return False
 
 
 def _compute_via_point(cx, cy, tx, ty):
-    """Singularity 영역을 우회하는 경유점 계산."""
-    safe_r = math.sqrt(DOBOT_L1 ** 2 + DOBOT_L2 ** 2)
+    """j2 위험 영역을 우회하는 경유점 계산.
+
+    경로의 중점을 safe_r (j2=J2_SAFE_MIN+10° 지점)로 밀어서 우회.
+    """
+    safe_r = REACH_SAFE_MIN + 20  # ≈249mm (여유)
 
     mx, my = (cx + tx) / 2, (cy + ty) / 2
     mid_r = math.sqrt(mx ** 2 + my ** 2)
@@ -84,7 +96,7 @@ def _compute_via_point(cx, cy, tx, ty):
     vx = float(np.clip(vx, *BOUNDS["x"]))
     vy = float(np.clip(vy, *BOUNDS["y"]))
 
-    if abs(_cos_j2(vx, vy)) > SINGULARITY_THRESHOLD:
+    if _predict_j2(vx, vy) < J2_SAFE_MIN:
         return None
     return (vx, vy)
 
@@ -266,7 +278,7 @@ def _clear_alarm(bot: pydobot.Dobot) -> pydobot.Dobot:
         new_bot = pydobot.Dobot(port=port, verbose=False)
         time.sleep(1)
         new_bot.speed(100, 100)
-        new_bot.move_to(200, 0, 50, 0, wait=True)
+        new_bot.move_to(*HOME_POS, wait=True)
         new_bot.speed(150, 150)
         pose = new_bot.pose()
         print(f"  >> ALARM 복구 완료: ({pose[0]:.0f},{pose[1]:.0f},{pose[2]:.0f})")

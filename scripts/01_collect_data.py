@@ -325,9 +325,9 @@ class LeRobotV3Collector:
             return
         try:
             print("  Home 위치로 이동 중...")
-            self.dobot.move_to(200, 0, 50, 0, wait=True)
+            self.dobot.move_to(240, 0, 80, 0, wait=True)
             self.wrist_angle = 0.0
-            print("  Home 위치 도착: (200, 0, 50, 0)")
+            print("  Home 위치 도착: (240, 0, 80, 0)")
         except Exception as e:
             print(f"  Go Home 실패: {e}")
 
@@ -980,8 +980,8 @@ def main():
         description="DOBOT Magician -- LeRobot v3.0 Data Collection (Single-Arm Sequential)",
     )
     parser.add_argument("--port", type=str, default=None, help="DOBOT serial port (auto-detect if omitted)")
-    parser.add_argument("--cam1", type=int, default=0, help="Top camera device ID")
-    parser.add_argument("--cam2", type=int, default=1, help="Wrist camera device ID")
+    parser.add_argument("--cam1", type=int, default=0, help="Wrist camera device ID")
+    parser.add_argument("--cam2", type=int, default=1, help="Top camera device ID")
     parser.add_argument("--cam-backend", type=str, default="auto",
                         choices=["auto", "dshow", "v4l2", "avfoundation"],
                         help="카메라 백엔드 (auto=OS자동, dshow=Windows, v4l2=Linux, avfoundation=Mac)")

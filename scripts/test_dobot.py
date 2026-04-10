@@ -34,8 +34,8 @@ def main():
     print(f"현재 위치: x={pose[0]:.1f} y={pose[1]:.1f} z={pose[2]:.1f} r={pose[3]:.1f}")
 
     print("\n--- 테스트 메뉴 ---")
-    print("[1] 홈 위치 이동 (200, 0, 50)")
-    print("[2] 앞으로 이동 (250, 0, 50)")
+    print("[1] 홈 위치 이동 (240, 0, 80)")
+    print("[2] 앞으로 이동 (250, 0, 80)")
     print("[3] 흡착컵 ON")
     print("[4] 흡착컵 OFF")
     print("[5] 그리퍼 ON")
@@ -46,10 +46,10 @@ def main():
     while True:
         cmd = input("\n> ").strip()
         if cmd == "1":
-            bot.move_to(200, 0, 50, 0, wait=True)
+            bot.move_to(240, 0, 80, 0, wait=True)
             print("홈 이동 완료")
         elif cmd == "2":
-            bot.move_to(250, 0, 50, 0, wait=True)
+            bot.move_to(250, 0, 80, 0, wait=True)
             print("앞으로 이동 완료")
         elif cmd == "3":
             bot.suck(True)
