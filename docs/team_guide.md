@@ -411,6 +411,9 @@ python client/pi0_dobot_client.py \
 ## Part D: 추론 (로봇 실행)
 
 학습이 끝나면 모델로 로봇을 자동 제어할 수 있습니다.
+두 가지 모드가 있습니다:
+- **D-텍스트**: 텍스트로 task를 직접 지정 (기본)
+- **D-음성**: 음성 명령으로 로봇 제어 (Claude API 사용)
 
 ### D-1. 서버에서 추론 서버 켜기
 
@@ -438,7 +441,7 @@ curl http://[서버IP]:8000/health
 
 `"status":"ok"` 가 보이면 성공입니다.
 
-### D-2. Mac에서 클라이언트 실행
+### D-2. 텍스트 명령 모드 (기본)
 
 **DOBOT이 연결된 Mac**에서 새 터미널을 열고:
 
@@ -456,16 +459,6 @@ python client/pi0_dobot_client.py \
 > `[서버IP]`를 실제 서버 IP 주소로 바꾸세요 (예: `192.168.0.100`)
 > `--task`를 바꾸면 다른 물품을 집을 수 있습니다.
 
-### D-3. 로봇 조작
-
-프로그램이 실행되면 카메라 미리보기 창이 뜹니다.
-
-```
-1. [SPACE] 한 번 눌러서 테스트 (로봇이 한 스텝 움직임)
-2. 잘 되면 [A] 눌러서 자동 모드 실행
-3. 끝내려면 [ESC]
-```
-
 #### 키보드 단축키
 
 | 키 | 동작 |
@@ -477,6 +470,60 @@ python client/pi0_dobot_client.py \
 | **T** | 작업(task) 변경 |
 | **L** | LLM 체이닝 모드 |
 | **ESC** | 종료 |
+
+### D-3. 음성 명령 모드 (Claude API)
+
+음성으로 로봇을 제어합니다. 말한 내용을 STT가 인식하고, Claude API가 의도를 분류해서 학습된 task 명령으로 변환합니다.
+
+#### 사전 준비
+
+1. `.env` 파일에 API 키 설정 (프로젝트 루트):
+```
+ANTHROPIC_API_KEY=sk-ant-xxxxx
+```
+
+2. STT 모델 사전 다운로드 (최초 1회):
+```bash
+# faster-whisper (CPU용, 가벼움)
+python -c "from faster_whisper import WhisperModel; WhisperModel('small')"
+
+# Qwen 2.5 Omni (GPU용, 고정밀) — GPU 환경에서만
+python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen2.5-Omni-3B')"
+```
+
+#### 실행
+
+```bash
+python client/pi0_voice_claude_client.py \
+    --server http://[서버IP]:8000
+```
+
+#### 동작 흐름
+
+```
+마이크 음성 → STT(한국어 인식) → Claude API(의도 분류) → 영어 task → Pi0 → 로봇 실행
+```
+
+| 음성 입력 | Claude 분류 | Pi0에 전달되는 task |
+|-----------|------------|-------------------|
+| "과자 줘" | robot → 과자 | `pick up the snack` |
+| "배고파" | dialog → 과자 제안 → 바로 실행 | `pick up the snack` |
+| "목 말라" | dialog → 음료 제안 → 바로 실행 | `pick up the drink` |
+| "너무 슬퍼" | dialog → 휴지 제안 → 바로 실행 | `pick up the tissue` |
+| "스트레스 받아" | dialog → 스트레스볼 제안 → 바로 실행 | `pick up the stress ball` |
+| "종료" | stop | (시스템 종료) |
+
+> 로봇이 동작 중에는 음성 입력을 받지 않습니다. 동작이 끝나면 자동으로 다시 음성 대기 상태가 됩니다.
+
+#### CLI 옵션
+
+| 옵션 | 기본값 | 설명 |
+|------|--------|------|
+| `--server` | (필수) | Pi0 서버 URL |
+| `--stt-model` | `small` | STT 모델 (base/small/medium) |
+| `--claude-model` | `claude-sonnet-4-20250514` | Claude 모델 |
+| `--cycles` | `10` | 태스크당 최대 실행 사이클 |
+| `--cam1` / `--cam2` | `1` / `2` | 카메라 ID |
 
 ---
 
@@ -546,6 +593,7 @@ cv2.destroyAllWindows()
   ↓
 [서버] python server/pi0_server.py 로 추론 서버 실행
   ↓
-[Mac] python client/pi0_dobot_client.py 로 로봇 실행
-       --task 로 원하는 물품 지정
+[Mac] 실행 방식 선택:
+  ├─ 텍스트: python client/pi0_dobot_client.py --task "pick up the tissue"
+  └─ 음성:   python client/pi0_voice_claude_client.py --server http://서버IP:8000
 ```
