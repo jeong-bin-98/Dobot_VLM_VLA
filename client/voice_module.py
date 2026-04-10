@@ -2,14 +2,18 @@
 """
 1단계 STT 전처리 파이프라인
 
-마이크 음성 → 전처리 → Qwen 2.5 ASR → 한국어 텍스트 출력
+마이크 음성 → 전처리 → STT → 한국어 텍스트 출력
 순수 STT만 수행. 커맨드 변환은 chatbot_module에서 처리.
 
-    python voice_module.py
+백엔드:
+  - whisper: faster-whisper (CPU에서 빠름, 테스트/노트북용)
+  - qwen:    Qwen2.5-Omni (GPU 권장, 고정밀)
+
+    python voice_module.py                        # whisper (기본)
+    python voice_module.py --backend qwen         # qwen (GPU)
 """
 
 import sys
-import time
 import struct
 import numpy as np
 
@@ -19,80 +23,120 @@ except ImportError:
     print("pip install pyaudio")
     sys.exit(1)
 
-try:
-    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
-    import torch
-except ImportError:
-    print("pip install transformers torch")
-    sys.exit(1)
-
 # 오디오 설정
 SAMPLE_RATE = 16000
 CHANNELS = 1
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
-SILENCE_THRESHOLD = 500       # RMS 기준 무음 판별
-SILENCE_DURATION = 1.5        # 이 시간(초) 동안 무음이면 녹음 종료
-MIN_RECORD_SEC = 0.5          # 최소 녹음 길이
-MAX_RECORD_SEC = 10.0         # 최대 녹음 길이
-CONFIDENCE_THRESHOLD = -0.3   # 로그 확률 신뢰도 임계값
-MIN_TEXT_LENGTH = 2           # 최소 텍스트 길이
+SILENCE_THRESHOLD = 500
+SILENCE_DURATION = 1.5
+MIN_RECORD_SEC = 0.5
+MAX_RECORD_SEC = 10.0
+MIN_TEXT_LENGTH = 2
 
 
 class VoiceSTT:
-    """마이크 음성 → 한국어 텍스트 변환 (Qwen 2.5 ASR)"""
+    """
+    마이크 음성 → 한국어 텍스트 변환
 
-    def __init__(self, model_name="Qwen/Qwen2.5-Omni-7B", device=None):
-        if device is None:
-            if torch.cuda.is_available():
-                self.device = "cuda"
-            elif torch.backends.mps.is_available():
-                self.device = "mps"
-            else:
-                self.device = "cpu"
-        else:
-            self.device = device
+    backend:
+        "whisper" — faster-whisper, CPU에서 빠름 (기본)
+        "qwen"    — Qwen2.5-Omni, GPU 권장
+    """
 
-        print(f"  [STT] 모델 로딩: {model_name} ({self.device})")
-        self.processor = AutoProcessor.from_pretrained(model_name)
-        self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
-            device_map=self.device,
-        )
-        self.model.eval()
-        print(f"  [STT] 모델 로드 완료")
-
-        # PyAudio
+    def __init__(self, backend="whisper", model_name=None, device=None):
+        self.backend = backend
         self.pa = pyaudio.PyAudio()
 
-    def listen(self) -> str:
-        """
-        마이크 녹음 → 전처리 → 1차 인식 → 신뢰도 체크 → (2차 인식) → 텍스트 반환
+        if backend == "whisper":
+            self._init_whisper(model_name or "base", device or "cpu")
+        elif backend == "qwen":
+            self._init_qwen(model_name or "Qwen/Qwen2.5-Omni-3B", device)
+        else:
+            raise ValueError(f"지원하지 않는 backend: {backend}")
 
-        Returns:
-            한국어 텍스트 문자열. 인식 실패 시 빈 문자열.
-        """
-        # 1. 녹음
+    # ── Whisper 초기화 ──
+    def _init_whisper(self, model_size, device):
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            print("pip install faster-whisper")
+            sys.exit(1)
+
+        compute_type = "int8" if device == "cpu" else "float16"
+        print(f"  [STT] faster-whisper 로딩: {model_size} ({device}/{compute_type})")
+        self._whisper = WhisperModel(model_size, device=device, compute_type=compute_type)
+        print(f"  [STT] 로드 완료")
+
+    # ── Qwen 초기화 ──
+    def _init_qwen(self, model_name, device):
+        try:
+            from transformers import (
+                Qwen2_5OmniForConditionalGeneration,
+                WhisperFeatureExtractor,
+                AutoTokenizer,
+            )
+            import torch
+        except ImportError:
+            print("pip install transformers torch accelerate")
+            sys.exit(1)
+
+        self._torch = torch
+
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+        self._qwen_device = device
+
+        print(f"  [STT] Qwen 로딩: {model_name} ({device})")
+
+        self._feature_extractor = WhisperFeatureExtractor.from_pretrained(
+            model_name, local_files_only=True,
+        )
+        self._qwen_tokenizer = AutoTokenizer.from_pretrained(
+            model_name, local_files_only=True,
+        )
+        self._qwen_model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16 if device != "cpu" else torch.float32,
+            device_map=device,
+            local_files_only=True,
+        )
+        self._qwen_model.eval()
+
+        # 프롬프트 캐싱
+        prompt = (
+            "<|im_start|>system\n"
+            "You are a speech transcription assistant. "
+            "Transcribe the audio exactly as spoken in Korean. "
+            "Output only the transcription, nothing else."
+            "<|im_end|>\n<|im_start|>user\n"
+            "<|audio_bos|><|AUDIO|><|audio_eos|>"
+            "<|im_end|>\n<|im_start|>assistant\n"
+        )
+        self._prompt_ids = self._qwen_tokenizer(prompt, return_tensors="pt").input_ids
+
+        print(f"  [STT] 로드 완료")
+
+    # ── 공통: 녹음 → 인식 ──
+    def listen(self) -> str:
+        """마이크 녹음 → STT → 한국어 텍스트 반환. 실패 시 빈 문자열."""
         audio_data = self._record()
         if audio_data is None:
             return ""
 
-        # 2. 전처리 (모노, 16kHz, RMS 볼륨 정규화)
         audio_np = self._preprocess(audio_data)
 
-        # 3. 1차 인식
-        text, confidence = self._transcribe(audio_np)
-        print(f"  [STT] 1차: \"{text}\" (conf: {confidence:.3f})")
+        if self.backend == "whisper":
+            text = self._transcribe_whisper(audio_np)
+        else:
+            text = self._transcribe_qwen(audio_np)
 
-        # 4. 신뢰도 체크 → 2차 인식
-        if confidence < CONFIDENCE_THRESHOLD or len(text) < MIN_TEXT_LENGTH:
-            print(f"  [STT] 신뢰도 낮음, 2차 정밀 인식 수행")
-            text2, confidence2 = self._transcribe(audio_np, precise=True)
-            print(f"  [STT] 2차: \"{text2}\" (conf: {confidence2:.3f})")
-            if confidence2 > confidence:
-                text = text2
-                confidence = confidence2
+        print(f"  [STT] 인식: \"{text}\"")
 
         if len(text.strip()) < MIN_TEXT_LENGTH:
             print(f"  [STT] 인식 결과 너무 짧음, 무시")
@@ -100,14 +144,42 @@ class VoiceSTT:
 
         return text.strip()
 
+    # ── Whisper 추론 ──
+    def _transcribe_whisper(self, audio_np: np.ndarray) -> str:
+        segments, _ = self._whisper.transcribe(
+            audio_np, language="ko", beam_size=5, vad_filter=True,
+        )
+        return " ".join(seg.text.strip() for seg in segments).strip()
+
+    # ── Qwen 추론 ──
+    def _transcribe_qwen(self, audio_np: np.ndarray) -> str:
+        torch = self._torch
+
+        audio_features = self._feature_extractor(
+            audio_np, sampling_rate=SAMPLE_RATE,
+            return_tensors="pt", return_attention_mask=True,
+        )
+        input_features = audio_features.input_features.to(self._qwen_device)
+        feature_attention_mask = audio_features.attention_mask.to(self._qwen_device)
+        input_ids = self._prompt_ids.to(self._qwen_device)
+
+        with torch.no_grad():
+            output_ids = self._qwen_model.generate(
+                input_ids=input_ids,
+                input_features=input_features,
+                feature_attention_mask=feature_attention_mask,
+                max_new_tokens=256,
+                do_sample=False,
+            )
+
+        generated = output_ids[0][input_ids.shape[1]:]
+        return self._qwen_tokenizer.decode(generated, skip_special_tokens=True).strip()
+
+    # ── 녹음 ──
     def _record(self) -> bytes | None:
-        """마이크 녹음. 음성 감지 후 무음이 지속되면 종료."""
         stream = self.pa.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=SAMPLE_RATE,
-            input=True,
-            frames_per_buffer=CHUNK,
+            format=FORMAT, channels=CHANNELS, rate=SAMPLE_RATE,
+            input=True, frames_per_buffer=CHUNK,
         )
 
         print("  [STT] 말씀하세요...")
@@ -130,7 +202,6 @@ class VoiceSTT:
                 frames.append(data)
                 if silent_chunks >= silence_chunks_limit:
                     break
-            # 아직 음성이 시작되지 않았으면 계속 대기
 
         stream.stop_stream()
         stream.close()
@@ -143,102 +214,41 @@ class VoiceSTT:
         print(f"  [STT] 녹음 완료: {duration:.1f}초")
         return b"".join(frames)
 
+    # ── 전처리 ──
     def _preprocess(self, audio_bytes: bytes) -> np.ndarray:
-        """오디오 전처리: 모노, 16kHz, RMS 볼륨 정규화"""
-        # bytes → int16 numpy 배열
         audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
-
-        # RMS 기반 볼륨 정규화
         rms = np.sqrt(np.mean(audio_np ** 2))
         if rms > 0:
-            target_rms = 3000.0
-            audio_np = audio_np * (target_rms / rms)
-
-        # 클리핑 방지
+            audio_np = audio_np * (3000.0 / rms)
         audio_np = np.clip(audio_np, -32768, 32767)
-
-        # float32 [-1, 1] 범위로 정규화
-        audio_np = audio_np / 32768.0
-
-        return audio_np
-
-    def _transcribe(self, audio_np: np.ndarray, precise: bool = False) -> tuple[str, float]:
-        """
-        Qwen 2.5 ASR로 음성 인식
-
-        Args:
-            audio_np: 전처리된 오디오 (float32, [-1, 1])
-            precise: True이면 정밀 모드 (beam search, 느림)
-
-        Returns:
-            (텍스트, 로그 확률 기반 신뢰도)
-        """
-        inputs = self.processor(
-            audio_np,
-            sampling_rate=SAMPLE_RATE,
-            return_tensors="pt",
-        )
-
-        input_features = inputs.input_features.to(self.device)
-
-        generate_kwargs = {
-            "language": "ko",
-            "task": "transcribe",
-            "return_dict_in_generate": True,
-            "output_scores": True,
-        }
-
-        if precise:
-            generate_kwargs["num_beams"] = 5
-        else:
-            generate_kwargs["num_beams"] = 1
-
-        with torch.no_grad():
-            outputs = self.model.generate(
-                input_features,
-                **generate_kwargs,
-            )
-
-        # 텍스트 디코딩
-        token_ids = outputs.sequences[0]
-        text = self.processor.batch_decode(
-            [token_ids], skip_special_tokens=True
-        )[0]
-
-        # 신뢰도 계산 (로그 확률 평균)
-        if hasattr(outputs, "scores") and outputs.scores:
-            log_probs = []
-            for i, score in enumerate(outputs.scores):
-                probs = torch.nn.functional.log_softmax(score, dim=-1)
-                token_id = token_ids[i + 1] if i + 1 < len(token_ids) else 0
-                log_probs.append(probs[0, token_id].item())
-            confidence = np.mean(log_probs) if log_probs else -1.0
-        else:
-            confidence = -1.0
-
-        return text, confidence
+        return audio_np / 32768.0
 
     @staticmethod
     def _calc_rms(data: bytes) -> float:
-        """오디오 청크의 RMS 볼륨 계산"""
         count = len(data) // 2
         shorts = struct.unpack(f"{count}h", data)
         sum_sq = sum(s * s for s in shorts)
         return (sum_sq / count) ** 0.5 if count > 0 else 0
 
     def close(self):
-        """리소스 해제"""
         self.pa.terminate()
 
 
 # 단독 실행: 마이크 테스트
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="VoiceSTT 마이크 테스트")
+    parser.add_argument("--backend", default="whisper", choices=["whisper", "qwen"])
+    parser.add_argument("--model", default=None, help="모델명 (whisper: base/small/medium, qwen: Qwen/Qwen2.5-Omni-3B)")
+    parser.add_argument("--device", default=None, help="cpu/cuda/mps")
+    args = parser.parse_args()
+
     print("=" * 50)
-    print("  VoiceSTT 마이크 테스트")
+    print(f"  VoiceSTT 마이크 테스트 ({args.backend})")
     print("  Ctrl+C로 종료")
     print("=" * 50)
 
-    stt = VoiceSTT()
+    stt = VoiceSTT(backend=args.backend, model_name=args.model, device=args.device)
 
     try:
         while True:

@@ -21,6 +21,9 @@ robot_env/
 .DS_Store
 Thumbs.db
 
+# Secrets
+.env
+
 # Dataset outputs (large files — do NOT commit)
 dataset/
 dataset_v3/

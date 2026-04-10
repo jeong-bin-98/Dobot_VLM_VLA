@@ -182,7 +182,7 @@ def main():
     parser.add_argument("--cycles", type=int, default=20, help="태스크당 최대 사이클")
 
     # STT 모델
-    parser.add_argument("--stt-model", type=str, default="Qwen/Qwen2.5-Omni-7B",
+    parser.add_argument("--stt-model", type=str, default="Qwen/Qwen2.5-Omni-3B",
                         help="STT 모델명")
     parser.add_argument("--stt-device", type=str, default=None,
                         help="STT 디바이스 (cuda/mps/cpu)")
