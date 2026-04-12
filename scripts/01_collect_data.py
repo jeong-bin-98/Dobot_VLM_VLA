@@ -718,15 +718,16 @@ class LeRobotV3Collector:
 
         ep_str = f"{self.episode_index:06d}"
 
-        # --- Save images with RELATIVE paths ---
+        # --- Save images with ABSOLUTE paths ---
+        abs_save_dir = self.save_dir.resolve()
         for i, (img1, img2) in enumerate(zip(self.episode_images_cam1, self.episode_images_cam2)):
             for cam_name, img in [(self.cam1_name, img1), (self.cam2_name, img2)]:
                 ep_dir = self.save_dir / "images" / cam_name / "chunk-000" / f"episode_{ep_str}"
                 ep_dir.mkdir(parents=True, exist_ok=True)
                 frame_path = ep_dir / f"frame_{i:06d}.jpg"
                 cv2.imwrite(str(frame_path), img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-                # Store RELATIVE path (lerobot v3.0 호환)
-                self.episode_data[i][cam_name] = {"path": f"images/{cam_name}/chunk-000/episode_{ep_str}/frame_{i:06d}.jpg"}
+                # Store ABSOLUTE path (lerobot DataLoader 호환)
+                self.episode_data[i][cam_name] = {"path": str(abs_save_dir / "images" / cam_name / "chunk-000" / f"episode_{ep_str}" / f"frame_{i:06d}.jpg")}
 
         # --- Save episode parquet ---
         df = pd.DataFrame(self.episode_data)

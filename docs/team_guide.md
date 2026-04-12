@@ -415,7 +415,43 @@ python client/pi0_dobot_client.py \
 - **D-텍스트**: 텍스트로 task를 직접 지정 (기본)
 - **D-음성**: 음성 명령으로 로봇 제어 (Claude API 사용)
 
-### D-1. 서버에서 추론 서버 켜기
+### D-1. 체크포인트 선택하기
+
+학습이 끝나면 `outputs/` 안에 여러 체크포인트가 저장됩니다:
+
+```
+outputs/snack_v3_fast_lora/checkpoints/
+├── 005000/pretrained_model/   ← 5000스텝 시점
+├── 010000/pretrained_model/   ← 10000스텝 시점
+├── 015000/pretrained_model/   ← 15000스텝 시점
+├── 020000/pretrained_model/   ← 20000스텝 시점 (마지막)
+└── last/pretrained_model/     ← = 020000과 동일
+```
+
+**어떤 체크포인트를 써야 할까?**
+
+lerobot에는 자동으로 "best" 체크포인트를 골라주는 기능이 없습니다.
+실제 로봇에서 추론해보고 가장 잘 되는 걸 선택해야 합니다.
+
+| 순서 | 방법 |
+|------|------|
+| 1 | 먼저 `last` (마지막 체크포인트)로 추론 테스트 |
+| 2 | 결과가 안 좋으면 중간 체크포인트 (010000, 015000 등)로 시도 |
+| 3 | 가장 잘 되는 체크포인트를 사용 |
+
+**왜 마지막이 항상 최고가 아닌가?**
+
+- 데이터가 적을수록 (1000프레임 이하) **오버피팅** 위험이 높음
+- 오버피팅 = 학습 데이터에만 맞추고, 실제 환경에서는 못하는 상태
+- 이 경우 중간 체크포인트 (전체 스텝의 50~75% 지점)가 더 나을 수 있음
+
+**실전 팁:**
+
+- 로봇이 물체 방향으로 대략 맞게 움직이면 → 그 체크포인트 OK
+- 로봇이 엉뚱한 방향으로 가거나 떨림 → 오버피팅, 이전 체크포인트 시도
+- 2~3개 체크포인트를 빠르게 테스트하는 게 가장 확실
+
+### D-2. 서버에서 추론 서버 켜기
 
 **서버 터미널**에서 실행합니다:
 
@@ -424,13 +460,24 @@ cd ~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA
 source .venv/bin/activate
 ```
 
+**pi0_fast 모델 사용:**
+
 ```bash
 PI0_POLICY_TYPE=pi0_fast \
-PI0_MODEL_PATH=./outputs/sn_ti_be_multi_v1/checkpoints/last/pretrained_model \
+PI0_MODEL_PATH=./outputs/snack_v3_fast_lora/checkpoints/last/pretrained_model \
 python server/pi0_server.py
 ```
 
-> `PI0_MODEL_PATH=` 뒤에 학습 출력 경로를 넣으세요.
+**pi0 모델 사용:**
+
+```bash
+PI0_POLICY_TYPE=pi0 \
+PI0_MODEL_PATH=./outputs/snack_v3_pi0_lora/checkpoints/last/pretrained_model \
+python server/pi0_server.py
+```
+
+> `PI0_MODEL_PATH=` 뒤에 원하는 체크포인트 경로를 넣으세요.
+> 다른 체크포인트를 시도하려면 `last`를 `010000` 등으로 바꾸면 됩니다.
 > `로드 완료`가 뜨면 서버 준비 완료입니다. **이 터미널은 닫지 마세요.**
 
 서버가 잘 켜졌는지 확인하려면 **Mac 터미널**에서:
@@ -441,7 +488,7 @@ curl http://[서버IP]:8000/health
 
 `"status":"ok"` 가 보이면 성공입니다.
 
-### D-2. 텍스트 명령 모드 (기본)
+### D-3. 텍스트 명령 모드 (기본)
 
 **DOBOT이 연결된 Mac**에서 새 터미널을 열고:
 
@@ -458,6 +505,17 @@ python client/pi0_dobot_client.py \
 
 > `[서버IP]`를 실제 서버 IP 주소로 바꾸세요 (예: `192.168.0.100`)
 > `--task`를 바꾸면 다른 물품을 집을 수 있습니다.
+
+### D-5. 로봇 조작
+
+프로그램이 실행되면 카메라 미리보기 창이 뜹니다.
+
+```
+1. [SPACE] 한 번 눌러서 테스트 (로봇이 한 스텝 움직임)
+2. 잘 되면 [A] 눌러서 자동 모드 실행
+3. 끝내려면 [ESC]
+```
+
 
 #### 키보드 단축키
 

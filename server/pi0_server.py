@@ -137,9 +137,12 @@ def img_to_tensor(img: np.ndarray) -> torch.Tensor:
     )
 
 
-def load_ft_config(model_path: str):
+def load_ft_config(model_path: str, policy_type: str = "pi0_fast"):
     """fine-tuned config.json 로드 (draccus 호환)"""
-    from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
+    if policy_type == "pi0_fast":
+        from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig as ConfigClass
+    else:
+        from lerobot.policies.pi0.configuration_pi0 import PI0Config as ConfigClass
 
     with open(Path(model_path) / "config.json") as f:
         cfg_data = json.load(f)
@@ -150,7 +153,7 @@ def load_ft_config(model_path: str):
         tmpf = f.name
 
     with draccus.config_type("json"):
-        return draccus.parse(PI0FastConfig, tmpf, args=[])
+        return draccus.parse(ConfigClass, tmpf, args=[])
 
 
 # 모델 로드
@@ -185,10 +188,29 @@ def startup_load_model():
         logger.info("   Policy type: Pi0-FAST (autoregressive + LoRA merged)")
     else:
         from lerobot.policies.pi0.modeling_pi0 import PI0Policy
-        policy = PI0Policy.from_pretrained(MODEL_PATH)
-        paligemma_tokenizer = policy._paligemma_tokenizer
-        tokenizer_max_length = policy.config.tokenizer_max_length
-        logger.info("   Policy type: Pi0 (flow-matching)")
+
+        adapter_path = Path(MODEL_PATH) / "adapter_config.json"
+        if adapter_path.exists():
+            from peft import PeftModel
+
+            base_policy = PI0Policy.from_pretrained("lerobot/pi0_base")
+            paligemma_tokenizer = base_policy._paligemma_tokenizer
+            tokenizer_max_length = base_policy.config.tokenizer_max_length
+
+            policy = PeftModel.from_pretrained(base_policy, MODEL_PATH)
+            policy = policy.merge_and_unload()
+            policy._tokenizer_max_length = tokenizer_max_length
+            policy._paligemma_tokenizer = paligemma_tokenizer
+
+            ft_config = load_ft_config(MODEL_PATH, policy_type="pi0")
+            policy.config = ft_config
+            logger.info(f"   Fine-tuned config: cameras={list(ft_config.input_features.keys())}")
+            logger.info("   Policy type: Pi0 (flow-matching + LoRA merged)")
+        else:
+            policy = PI0Policy.from_pretrained(MODEL_PATH)
+            paligemma_tokenizer = policy._paligemma_tokenizer
+            tokenizer_max_length = policy.config.tokenizer_max_length
+            logger.info("   Policy type: Pi0 (flow-matching)")
 
     policy.eval()
     policy.to(DEVICE)
