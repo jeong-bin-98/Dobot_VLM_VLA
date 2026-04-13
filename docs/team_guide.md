@@ -264,6 +264,46 @@ scp -r ./dataset/tissue_dataset_v1 busan01@192.168.0.100:~/snap/snapd-desktop-in
 ./train.sh ./dataset/tissue_dataset_v1 1 10000 outputs/tissue_v1
 ```
 
+#### 4가지 학습 모드 (pi0 / pi0_fast × LoRA / Full)
+
+`train.sh`는 6, 7번째 인자로 **파인튜닝 방식**과 **모델 종류**를 고를 수 있습니다.
+
+```bash
+./train.sh [데이터셋] [GPU] [스텝] [출력경로] [resume] [full] [pi0|pi0_fast]
+```
+
+| 모드 | 학습 속도 | VRAM 사용량 | 추론 속도 | 안정성 | 언제 쓸까 |
+|------|----------|------------|----------|--------|----------|
+| **① pi0_fast + LoRA** (기본) | 빠름 | **~11GB** | 빠름 (5x) | 중 | **기본 추천** — 서버 부담 적고 빠르게 실험 |
+| **② pi0_fast + Full** | 느림 | 매우 높음 (48GB+ 필요) | 빠름 (5x) | 중 | 데이터가 충분할 때 (현재 하드웨어에선 OOM 가능성 ❌) |
+| **③ pi0 + LoRA** | 중간 | 낮음 | 느림 | **높음** | 데이터 적거나 Pi0-FAST가 garbage 토큰 뱉을 때 |
+| **④ pi0 + Full** | 느림 | **~37GB** | 느림 | **가장 높음** | 데이터 충분 + 안정성 최우선 (최고 품질) |
+
+**실행 예시:**
+
+```bash
+# ① pi0_fast + LoRA (기본, 추천)  — VRAM ~11GB
+./train.sh ./dataset/snack_dataset_v3 1 20000 outputs/snack_v3_fast_lora
+
+# ② pi0_fast + Full — 현재 서버에서는 OOM 가능성 있음 ❌
+./train.sh ./dataset/snack_dataset_v3 0 20000 outputs/snack_v3_fast_full "" full
+
+# ③ pi0 + LoRA  — 소량 데이터 안정 학습
+./train.sh ./dataset/snack_dataset_v3 0 20000 outputs/snack_v3_pi0_lora "" "" pi0
+
+# ④ pi0 + Full  — 최고 품질, VRAM ~37GB
+./train.sh ./dataset/snack_dataset_v3 0 20000 outputs/snack_v3_pi0_full "" full pi0
+```
+
+> **인자 규칙:** 6번째(`full`)나 7번째(`pi0`) 인자만 쓰고 5번째(`resume`)는 건너뛰고 싶다면, 그 자리를 빈 문자열 `""`로 비워두세요. 위 예시의 `"" full`, `"" "" pi0` 패턴이 그런 경우입니다.
+
+**모드 선택 가이드:**
+
+- **처음 학습한다면** → ① `pi0_fast + LoRA` (가장 빠르고 VRAM 적게 씀)
+- **Pi0-FAST가 이상한 토큰을 뱉는다면** → ③ `pi0 + LoRA`로 전환 (flow-matching은 토큰 포맷 문제 없음)
+- **실제 로봇 성능을 극대화하고 싶다면** → ④ `pi0 + Full` (VRAM 여유 있을 때만)
+- **pi0와 pi0_fast의 차이가 궁금하다면** → [README.md의 Pi0 vs Pi0-FAST 비교표](../README.md#모델-선택-pi0-vs-pi0-fast) 참고
+
 #### 이어서 학습하기 (Resume)
 
 학습을 중간에 멈췄거나 스텝 수를 늘려서 더 학습하고 싶을 때, 마지막 체크포인트에서 이어서 학습할 수 있습니다.
