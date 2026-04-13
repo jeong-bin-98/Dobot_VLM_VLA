@@ -460,25 +460,53 @@ cd ~/snap/snapd-desktop-integration/intel_third_hands/Dobot_VLM_VLA
 source .venv/bin/activate
 ```
 
-**pi0_fast 모델 사용:**
+#### 추론 서버 2가지 버전
+
+| 버전 | 파일 | 특징 |
+|------|------|------|
+| **v1** (구) | `server/pi0_server.py` | 수동 tokenizer/normalizer, pi0_fast 전용으로 시작 |
+| **v2** (권장) | `server/pi0_server_v2.py` | 공식 lerobot 파이프라인 사용, pi0/pi0_fast 통합, torch.compile 옵션 |
+
+**추천: v2 사용** (아래 설명은 v2 기준)
+
+#### GPU 선택 및 기본 실행
 
 ```bash
+# GPU 0번 + pi0_fast
+CUDA_VISIBLE_DEVICES=0 \
 PI0_POLICY_TYPE=pi0_fast \
 PI0_MODEL_PATH=./outputs/snack_v3_fast_lora/checkpoints/last/pretrained_model \
-python server/pi0_server.py
+python server/pi0_server_v2.py
 ```
-
-**pi0 모델 사용:**
 
 ```bash
+# GPU 0번 + pi0 (flow-matching)
+CUDA_VISIBLE_DEVICES=0 \
 PI0_POLICY_TYPE=pi0 \
 PI0_MODEL_PATH=./outputs/snack_v3_pi0_lora/checkpoints/last/pretrained_model \
-python server/pi0_server.py
+python server/pi0_server_v2.py
 ```
 
-> `PI0_MODEL_PATH=` 뒤에 원하는 체크포인트 경로를 넣으세요.
-> 다른 체크포인트를 시도하려면 `last`를 `010000` 등으로 바꾸면 됩니다.
+> `CUDA_VISIBLE_DEVICES=0` → 0번 GPU 사용. `nvidia-smi`로 빈 GPU를 확인하고 번호를 바꾸세요.
+> `PI0_MODEL_PATH=` 뒤에 원하는 체크포인트 경로를 넣으세요 (`last`를 `010000` 등으로 바꾸면 중간 체크포인트 사용).
 > `로드 완료`가 뜨면 서버 준비 완료입니다. **이 터미널은 닫지 마세요.**
+
+#### torch.compile로 추론 가속 (선택)
+
+추론이 느린 경우 `PI0_COMPILE=1`을 추가하면 `torch.compile(mode="max-autotune")`이 적용되어 1.5~2배 빨라집니다.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+PI0_COMPILE=1 \
+PI0_POLICY_TYPE=pi0 \
+PI0_MODEL_PATH=./outputs/snack_v3_pi0_lora/checkpoints/last/pretrained_model \
+python server/pi0_server_v2.py
+```
+
+**주의점:**
+- 서버 시작 시 **첫 컴파일에 2~5분** 걸림 (warmup 자동 실행). `Warmup 완료`가 뜨면 끝
+- 컴파일이 완료되면 이후 모든 추론이 빨라짐
+- **먼저 컴파일 없이 정상 동작하는지 확인한 후에** 활성화하는 걸 추천
 
 서버가 잘 켜졌는지 확인하려면 **Mac 터미널**에서:
 

@@ -188,19 +188,16 @@ def startup_load_model():
         logger.info("   Policy type: Pi0-FAST (autoregressive + LoRA merged)")
     else:
         from lerobot.policies.pi0.modeling_pi0 import PI0Policy
+        from transformers import AutoTokenizer
 
         adapter_path = Path(MODEL_PATH) / "adapter_config.json"
         if adapter_path.exists():
             from peft import PeftModel
 
             base_policy = PI0Policy.from_pretrained("lerobot/pi0_base")
-            paligemma_tokenizer = base_policy._paligemma_tokenizer
-            tokenizer_max_length = base_policy.config.tokenizer_max_length
 
             policy = PeftModel.from_pretrained(base_policy, MODEL_PATH)
             policy = policy.merge_and_unload()
-            policy._tokenizer_max_length = tokenizer_max_length
-            policy._paligemma_tokenizer = paligemma_tokenizer
 
             ft_config = load_ft_config(MODEL_PATH, policy_type="pi0")
             policy.config = ft_config
@@ -208,14 +205,66 @@ def startup_load_model():
             logger.info("   Policy type: Pi0 (flow-matching + LoRA merged)")
         else:
             policy = PI0Policy.from_pretrained(MODEL_PATH)
-            paligemma_tokenizer = policy._paligemma_tokenizer
-            tokenizer_max_length = policy.config.tokenizer_max_length
             logger.info("   Policy type: Pi0 (flow-matching)")
 
-    policy.eval()
-    policy.to(DEVICE)
+        # pi0는 모델에 tokenizer가 없으므로 직접 로드
+        # (processor_pi0.py의 TokenizerProcessorStep과 동일한 설정)
+        tokenizer_max_length = policy.config.tokenizer_max_length
+        paligemma_tokenizer = AutoTokenizer.from_pretrained(
+            "google/paligemma-3b-pt-224",
+            padding_side="right",
+        )
+
+        # flow-matching denoising 스텝 수 조절 (기본 10, torch.compile과 함께 사용)
+        inference_steps = int(os.environ.get("PI0_INFERENCE_STEPS", 10))
+        policy.config.num_inference_steps = inference_steps
+        logger.info(f"   num_inference_steps: {inference_steps}")
+
+    policy.eval().to(DEVICE)
+
+    # Ampere GPU TF32 활성화 (matmul 1.5~2배 가속, 품질 저하 거의 없음)
+    torch.set_float32_matmul_precision("high")
+
+    # torch.compile로 select_action 가속 (첫 호출 시 컴파일 오버헤드 있음)
+    policy.select_action = torch.compile(
+        policy.select_action,
+        mode="reduce-overhead",
+        fullgraph=False,
+    )
+    logger.info("   torch.compile 적용: mode=reduce-overhead")
 
     normalizer = ModelNormalizer(MODEL_PATH)
+
+    # Warmup: torch.compile 첫 호출 지연 제거 (dummy 추론 1회)
+    logger.info("Warmup 추론 중... (torch.compile 컴파일)")
+    try:
+        warmup_t0 = time.time()
+        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        dummy_state = np.zeros(5, dtype=np.float32)
+        norm_state = normalizer.normalize_state(dummy_state)
+        state_t = torch.tensor(norm_state, dtype=torch.float32).unsqueeze(0).to(DEVICE)
+        dummy_obs = {
+            "observation.images.top": img_to_tensor(dummy_img),
+            "observation.images.wrist": img_to_tensor(dummy_img),
+            "observation.state": state_t,
+        }
+        dummy_lang = "pick up the object"
+        if POLICY_TYPE == "pi0" and not dummy_lang.endswith("\n"):
+            dummy_lang = dummy_lang + "\n"
+        tokenized = paligemma_tokenizer(
+            dummy_lang,
+            return_tensors="pt",
+            padding="max_length",
+            max_length=tokenizer_max_length,
+            truncation=True,
+        )
+        dummy_obs["observation.language.tokens"] = tokenized.input_ids.to(DEVICE)
+        dummy_obs["observation.language.attention_mask"] = tokenized.attention_mask.to(DEVICE).bool()
+        with torch.no_grad():
+            _ = policy.select_action(dummy_obs)
+        logger.info(f"Warmup 완료 ({time.time() - warmup_t0:.1f}s)")
+    except Exception as e:
+        logger.warning(f"Warmup 실패 (무시하고 계속): {e}")
 
     dt = time.time() - t0
     logger.info(f"로드 완료 ({dt:.1f}s)")
@@ -263,6 +312,9 @@ def predict(req: InferenceRequest):
 
         # 4. 언어 명령 토크나이즈
         lang = req.language_instruction or "pick up the object"
+        # pi0는 Pi0NewLineProcessor로 task 끝에 \n을 붙여 학습했으므로 동일하게 처리
+        if POLICY_TYPE == "pi0" and not lang.endswith("\n"):
+            lang = lang + "\n"
         tokenized = paligemma_tokenizer(
             lang,
             return_tensors="pt",

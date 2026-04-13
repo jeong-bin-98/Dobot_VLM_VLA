@@ -302,13 +302,13 @@ class Pi0Client:
             r = self.session.post(
                 f"{self.server_url}/predict",
                 json=payload,
-                timeout=10,
+                timeout=120,  # torch.compile 첫 호출 시 수 분 걸릴 수 있음
             )
             r.raise_for_status()
             data = r.json()
             return data["actions"], data["raw_actions"], data["inference_time_ms"]
         except requests.exceptions.Timeout:
-            print("   서버 타임아웃 (10초)")
+            print("   서버 타임아웃 (120초)")
             return None, None, 0
         except Exception as e:
             print(f"   추론 요청 실패: {e}")
