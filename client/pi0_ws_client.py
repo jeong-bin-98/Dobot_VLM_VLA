@@ -7,7 +7,7 @@ Pi0 WebSocket 추론 클라이언트 (DOBOT PC)
 
     python pi0_ws_client.py \\
         --server ws://192.168.1.100:8765/ws \\
-        --port COM4 --cam1 0 --cam2 1 \\
+        --cam1 0 --cam2 1 \\
         --task "pick up the red cup"
 """
 
@@ -104,11 +104,17 @@ class CameraCapture:
         self.cap1 = cv2.VideoCapture(cam1_id)
         self.cap2 = cv2.VideoCapture(cam2_id)
 
-        # Fallback to V4L2
+        # Fallback: OS별 자동 감지 (Mac=AVFOUNDATION, Windows=DSHOW, Linux=V4L2)
+        import platform
+        os_name = platform.system()
+        fallback = {
+            "Darwin": cv2.CAP_AVFOUNDATION,
+            "Windows": cv2.CAP_DSHOW,
+        }.get(os_name, cv2.CAP_V4L2)
         if not self.cap1.isOpened():
-            self.cap1 = cv2.VideoCapture(cam1_id, cv2.CAP_V4L2)
+            self.cap1 = cv2.VideoCapture(cam1_id, fallback)
         if not self.cap2.isOpened():
-            self.cap2 = cv2.VideoCapture(cam2_id, cv2.CAP_V4L2)
+            self.cap2 = cv2.VideoCapture(cam2_id, fallback)
 
         for cap in (self.cap1, self.cap2):
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
@@ -152,11 +158,24 @@ class DobotControl:
         print(f"   DOBOT: {port} (Z_pivot={self._z_pivot:.1f}mm)")
 
     def _find_port(self) -> str:
+        # 1. CH340/CP210 디바이스 검색 (가장 정확)
         for p in list_ports.comports():
             if any(c in p.description for c in ("CH340", "CP210")):
                 return p.device
+        # 2. Mac: usbserial/usbmodem 패턴 검색
+        for p in list_ports.comports():
+            if "usbserial" in p.device or "usbmodem" in p.device:
+                return p.device
+        # 3. 첫 번째 시리얼 포트 (없으면 OS별 기본 경로)
         ports = list_ports.comports()
-        return ports[0].device if ports else "/dev/ttyUSB0"
+        if ports:
+            return ports[0].device
+        import platform
+        os_name = platform.system()
+        return {
+            "Darwin": "/dev/tty.usbserial-0001",
+            "Windows": "COM3",
+        }.get(os_name, "/dev/ttyUSB0")
 
     def _calibrate_z_pivot(self):
         """현재 위치에서 Z_pivot 자동 캘리브레이션."""
