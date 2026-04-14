@@ -221,6 +221,7 @@ class VoiceClaudePipeline:
         # 1. STT (Qwen 2.5 ASR)
         print("[1/4] STT 모듈 로딩...")
         self.stt = VoiceSTT(
+            backend=args.stt_backend,
             model_name=args.stt_model,
             device=args.stt_device,
         )
@@ -360,9 +361,12 @@ def main():
     parser.add_argument("--chunk-size", type=int, default=2, help="Pi0 액션 청크 스텝 수")
     parser.add_argument("--cycles", type=int, default=10, help="태스크당 최대 사이클")
 
-    # STT (Qwen 2.5 ASR)
-    parser.add_argument("--stt-model", type=str, default="Qwen/Qwen2.5-Omni-3B",
-                        help="STT 모델명")
+    # STT
+    parser.add_argument("--stt-backend", type=str, default="whisper",
+                        choices=["whisper", "qwen"],
+                        help="STT 백엔드 (whisper: faster-whisper, qwen: Qwen2.5-Omni)")
+    parser.add_argument("--stt-model", type=str, default=None,
+                        help="STT 모델명 (whisper: base/small/medium, qwen: Qwen/Qwen2.5-Omni-3B)")
     parser.add_argument("--stt-device", type=str, default=None,
                         help="STT 디바이스 (cuda/mps/cpu)")
 
