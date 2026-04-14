@@ -254,7 +254,7 @@ class VoiceClaudePipeline:
     def run(self):
         """메인 루프: 음성 대기 → Claude 분류 → 실행"""
         try:
-            self.dobot.home()
+            self.dobot.go_home()
 
             while True:
                 # === 1단계: 음성 인식 (Qwen 2.5 ASR) ===

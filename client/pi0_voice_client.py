@@ -68,7 +68,7 @@ class VoiceControlPipeline:
     def run(self):
         """메인 루프: 음성 대기 → 분류 → 실행 반복"""
         try:
-            self.dobot.home()
+            self.dobot.go_home()
 
             while True:
                 # === 1단계: 음성 인식 ===

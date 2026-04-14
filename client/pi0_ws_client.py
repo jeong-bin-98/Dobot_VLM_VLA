@@ -425,7 +425,7 @@ class Pi0StreamClient:
   [SPACE] 1회 추론   [A] Auto   [H] Home   [G] Grip   [ESC] Exit
  ============================================================
 """)
-        self.dobot.home()
+        self.dobot.go_home()
         auto_mode = False
         cycle = 0
 
@@ -498,7 +498,7 @@ class Pi0StreamClient:
                     print(f"\n  {'AUTO' if auto_mode else 'MANUAL'} mode")
 
                 elif key == ord("h"):
-                    self.dobot.home()
+                    self.dobot.go_home()
                     print("  Home")
 
                 elif key == ord("g"):
@@ -552,7 +552,7 @@ class Pi0StreamClient:
         print("\n  Safe shutdown...")
         try:
             print("  Homing...")
-            self.dobot.home()
+            self.dobot.go_home()
             print("  Home OK")
         except Exception as e:
             print(f"  Home failed: {e}")
